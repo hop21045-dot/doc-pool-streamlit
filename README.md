@@ -1,0 +1,66 @@
+# DOC_POOL 리포트 분류 Streamlit 앱
+
+텔레그램 공개 채널 `https://t.me/DOC_POOL`에 올라오는 증권사 리포트 게시글을 읽어 섹터별로 분류하고, 읽어볼 가치와 짧은 요약을 보여주는 Streamlit 앱입니다.
+
+## 실행
+
+```powershell
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## 동작 방식
+
+- 기본 수집 방식은 텔레그램 공개 미리보기 페이지(`https://t.me/s/DOC_POOL`) 파싱입니다.
+- 로그인이나 Telegram API 키 없이 동작하지만, 텔레그램이 공개 미리보기를 제한하면 수집 범위가 줄어들 수 있습니다.
+- 안정적으로 운영하려면 Telegram API 설정을 권장합니다.
+  - `TELEGRAM_API_ID`
+  - `TELEGRAM_API_HASH`
+  - `TELEGRAM_SESSION` 선택값, 기본값은 `doc_pool.session`
+  - `TELEGRAM_STRING_SESSION` 선택값, Streamlit Cloud 같은 배포 환경에서 파일 세션 대신 사용
+- Telegram API 설정이 있고 앱에서 `Gemini PDF 분류 실행`을 켜면 PDF를 다운로드해 본문을 추출하고 Gemini로 분류합니다.
+- 동일 PDF는 SHA-256 해시로 중복 체크합니다. 한 번 분류된 PDF는 다시 올라와도 기존 결과를 재사용합니다.
+- `GEMINI_API_KEY`가 없으면 PDF 다운로드/중복 등록까지만 가능하고 Gemini 분류는 실행되지 않습니다.
+- `OPENAI_API_KEY`가 있으면 원하는 리포트 카드에서 `GPT 상세분석`을 눌러 해당 PDF만 심층 분석할 수 있습니다. GPT는 Gemini 1차 분석 JSON과 PDF 본문을 함께 받아 교차검증, 레이팅/읽어볼 가치 재판정, 심층 보완 분석을 수행합니다.
+- GPT 상세분석 결과도 SQLite에 저장되어 같은 모델/프롬프트 방식으로 다시 누르면 재사용됩니다.
+- GPT 상세분석은 `prompts/report_detail.md`의 Gemini 교차검증 + 7개 목차 프롬프트를 따릅니다. 현재 앱은 저장된 PDF 본문을 기반으로 분석하며, DART/뉴스/IR 웹 검색은 자동 수집하지 않으므로 PDF에 없는 최신 외부 데이터는 `확인 필요`로 표시하게 했습니다.
+- Gemini PDF 분류를 실행하지 않으면 섹터와 읽을 가치는 게시글/파일명 기반 규칙으로 임시 분류합니다.
+- 요니쿠니봇의 기존 분석 기준은 `PROMPT.md`에 정리했고, 실제 분류용 프롬프트는 `prompts/report_classifier.md`에 분리했습니다.
+- PDF 중복 분석 방지를 위해 `report_store.py`에 SHA-256 해시 기반 SQLite 캐시 구조를 준비했습니다. 같은 PDF는 한 번만 분류하고, 이후 동일 파일은 기존 분류 결과를 재사용하는 방식입니다.
+
+## 환경변수
+
+```powershell
+TELEGRAM_API_ID=123456
+TELEGRAM_API_HASH=...
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-3.1-flash-lite
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4.1-mini
+MAX_PDF_TEXT_CHARS=120000
+```
+
+`GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
+
+## 분류 섹터
+
+- 매크로/거시경제
+- 반도체
+- 디스플레이
+- 2차전지
+- 자동차/모빌리티
+- 바이오/헬스케어
+- 인터넷/게임/미디어
+- 금융
+- 조선/기계/방산
+- 에너지/화학
+- 음식료/소비재
+- 통신
+- 부동산/리츠
+- 기타
+
+## 다음 단계로 개선할 수 있는 부분
+
+- 관심 종목/섹터 기준 개인화 점수화
+- 백그라운드 스케줄러로 주기적 자동 수집
+- Streamlit Cloud 배포용 secrets 설정 정리

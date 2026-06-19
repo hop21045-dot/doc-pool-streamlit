@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+*.session
+*.session-journal
+.streamlit/secrets.toml
+data/
+.codex-remote-attachments/
