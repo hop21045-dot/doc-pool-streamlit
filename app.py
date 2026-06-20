@@ -43,6 +43,7 @@ CHANNEL = "DOC_POOL"
 TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_PDF_TEXT_CHARS = int(os.getenv("MAX_PDF_TEXT_CHARS", "120000"))
+MIN_TELEGRAM_MESSAGE_ID = int(os.getenv("MIN_TELEGRAM_MESSAGE_ID", "1030"))
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 
@@ -270,6 +271,8 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
                 "`python make_telegram_session.py`를 먼저 실행해 doc_pool.session을 생성하세요."
             )
         async for message in client.iter_messages(CHANNEL, limit=limit):
+            if message.id < MIN_TELEGRAM_MESSAGE_ID:
+                break
             text_parts = [message.message or ""]
             document_name = get_telethon_document_name(message)
             if document_name:
@@ -484,6 +487,8 @@ def fetch_channel_posts_from_preview(limit: int) -> list[ReportPost]:
 
     for message in soup.select(".tgme_widget_message"):
         message_id = message.get("data-post", "").split("/")[-1]
+        if message_id.isdigit() and int(message_id) < MIN_TELEGRAM_MESSAGE_ID:
+            continue
         text_node = message.select_one(".tgme_widget_message_text")
         if not text_node:
             continue
@@ -764,6 +769,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("수집 설정")
+        st.caption(f"메시지 ID {MIN_TELEGRAM_MESSAGE_ID}번 이후 글만 수집")
         limit = st.slider("가져올 게시글 수", min_value=10, max_value=500, value=100, step=10)
         classify_pdfs = st.toggle(
             "Gemini PDF 분류 실행",

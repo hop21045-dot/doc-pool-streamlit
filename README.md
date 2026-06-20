@@ -48,9 +48,12 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini
 MAX_PDF_TEXT_CHARS=120000
+MIN_TELEGRAM_MESSAGE_ID=1030
 ```
 
 `GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
+
+`MIN_TELEGRAM_MESSAGE_ID=1030`은 DOC_POOL에서 1029번까지 이미 읽은 상태로 보고, 1030번 이후 글만 수집한다는 뜻입니다.
 
 ## 분류 섹터
 
