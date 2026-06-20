@@ -646,7 +646,8 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
     for post in posts:
         text_for_fallback = " ".join(part for part in [post.text, post.file_name] if part)
         sector, hits = classify_sector(text_for_fallback)
-        value, reason = rate_reading_value(text_for_fallback, sector)
+        value = "미분류"
+        reason = "Gemini PDF 분류 전입니다. 게시글/파일명만으로는 요니쿠니봇식 읽을 가치 판단을 하지 않습니다."
         summary = heuristic_summary(text_for_fallback)
         rating = ""
         stock_name = ""
@@ -827,7 +828,7 @@ def main() -> None:
         st.stop()
 
     sectors = ["전체"] + sorted(df["섹터"].unique().tolist())
-    values = ["전체", "필독", "권장", "참고", "낮음", "스킵 가능"]
+    values = ["전체", "필독", "권장", "참고", "낮음", "스킵 가능", "미분류"]
     ratings = ["전체", "A+", "A", "B+", "B", "C", "등급 없음"]
 
     filters = st.columns([1.2, 1.2, 1.2, 2])
