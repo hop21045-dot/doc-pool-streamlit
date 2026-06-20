@@ -9,6 +9,14 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+PDF 분류를 쓰기 전에 로컬에서 Telegram 세션을 먼저 생성하세요.
+
+```powershell
+python make_telegram_session.py
+```
+
+전화번호는 `+8210...` 형식으로 입력합니다. 인증이 끝나면 `doc_pool.session` 파일이 생성되고, 이후 Streamlit 앱에서 PDF 분류를 실행할 수 있습니다.
+
 ## 동작 방식
 
 - 기본 수집 방식은 텔레그램 공개 미리보기 페이지(`https://t.me/s/DOC_POOL`) 파싱입니다.
@@ -19,6 +27,7 @@ streamlit run app.py
   - `TELEGRAM_SESSION` 선택값, 기본값은 `doc_pool.session`
   - `TELEGRAM_STRING_SESSION` 선택값, Streamlit Cloud 같은 배포 환경에서 파일 세션 대신 사용
 - Telegram API 설정이 있고 앱에서 `Gemini PDF 분류 실행`을 켜면 PDF를 다운로드해 본문을 추출하고 Gemini로 분류합니다.
+- Streamlit 앱 안에서는 Telegram 전화번호 인증을 받지 않습니다. `make_telegram_session.py`로 세션을 먼저 만든 뒤 앱을 실행하세요.
 - 동일 PDF는 SHA-256 해시로 중복 체크합니다. 한 번 분류된 PDF는 다시 올라와도 기존 결과를 재사용합니다.
 - `GEMINI_API_KEY`가 없으면 PDF 다운로드/중복 등록까지만 가능하고 Gemini 분류는 실행되지 않습니다.
 - `OPENAI_API_KEY`가 있으면 원하는 리포트 카드에서 `GPT 상세분석`을 눌러 해당 PDF만 심층 분석할 수 있습니다. GPT는 Gemini 1차 분석 JSON과 PDF 본문을 함께 받아 교차검증, 레이팅/읽어볼 가치 재판정, 심층 보완 분석을 수행합니다.

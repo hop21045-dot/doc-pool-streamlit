@@ -236,7 +236,7 @@ def normalize_text(text: str) -> str:
 
 
 def fetch_channel_posts(limit: int, classify_pdfs: bool) -> list[ReportPost]:
-    if os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"):
+    if classify_pdfs and os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"):
         return asyncio.run(fetch_channel_posts_with_telethon(limit, classify_pdfs))
     return fetch_channel_posts_from_preview(limit)
 
@@ -252,7 +252,13 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
     session_arg = StringSession(string_session) if string_session else session
     posts: list[ReportPost] = []
 
-    async with TelegramClient(session_arg, api_id, api_hash) as client:
+    client = TelegramClient(session_arg, api_id, api_hash)
+    async with client:
+        if not await client.is_user_authorized():
+            raise RuntimeError(
+                "Telegram 세션 인증이 필요합니다. Streamlit을 끄고 "
+                "`python make_telegram_session.py`를 먼저 실행해 doc_pool.session을 생성하세요."
+            )
         async for message in client.iter_messages(CHANNEL, limit=limit):
             text_parts = [message.message or ""]
             document_name = get_telethon_document_name(message)
