@@ -44,11 +44,6 @@ TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v4"
 MAX_PDF_TEXT_CHARS = int(os.getenv("MAX_PDF_TEXT_CHARS", "120000"))
-COLLECT_UNREAD_ONLY = os.getenv("COLLECT_UNREAD_ONLY", "true").strip().lower() not in (
-    "0",
-    "false",
-    "no",
-)
 DETAIL_TARGET_SECTORS = [
     item.strip()
     for item in os.getenv("DETAIL_TARGET_SECTORS", "").split(",")
@@ -289,10 +284,7 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
                 "Telegram 세션 인증이 필요합니다. Streamlit을 끄고 "
                 "`python make_telegram_session.py`를 먼저 실행해 doc_pool.session을 생성하세요."
             )
-        unread_count = await get_channel_unread_count(client) if COLLECT_UNREAD_ONLY else None
         effective_limit = limit
-        if unread_count is not None:
-            effective_limit = min(limit, unread_count)
         if effective_limit <= 0:
             return []
 
@@ -381,15 +373,6 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
             )
 
     return posts
-
-
-async def get_channel_unread_count(client: object) -> int:
-    entity = await client.get_entity(CHANNEL)
-    async for dialog in client.iter_dialogs():
-        dialog_entity = getattr(dialog, "entity", None)
-        if dialog_entity and getattr(dialog_entity, "id", None) == getattr(entity, "id", None):
-            return int(getattr(dialog, "unread_count", 0) or 0)
-    return 0
 
 
 def get_telethon_document_name(message: object) -> str:
@@ -871,17 +854,13 @@ def main() -> None:
 
     with st.sidebar:
         st.header("수집 설정")
-        if COLLECT_UNREAD_ONLY:
-            st.caption("Telegram API 사용 시 읽지 않은 글 중 최대 N개 수집")
-        else:
-            st.caption("최신 글 기준으로 수집")
+        st.caption("채널에 올라온 최신 글 기준으로 수집")
         st.caption(
             "상세분석 후보: "
             f"{', '.join(DETAIL_TARGET_SECTORS) if DETAIL_TARGET_SECTORS else '전체 섹터'} / "
             "A+ 또는 필독 또는 B+ 이상이면서 권장/필독"
         )
-        slider_label = "가져올 게시글 수" if not COLLECT_UNREAD_ONLY else "읽지 않은 글 중 가져올 최대 게시글 수"
-        limit = st.slider(slider_label, min_value=10, max_value=2000, value=100, step=10)
+        limit = st.slider("가져올 최신 게시글 수", min_value=10, max_value=2000, value=100, step=10)
         classify_pdfs = st.toggle(
             "Gemini PDF 분류 실행",
             value=False,

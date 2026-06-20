@@ -48,13 +48,12 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini
 MAX_PDF_TEXT_CHARS=120000
-COLLECT_UNREAD_ONLY=true
 DETAIL_TARGET_SECTORS=
 ```
 
 `GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
 
-`COLLECT_UNREAD_ONLY=true`이면 Telegram API 사용 시 채널의 읽지 않은 글 개수 안에서만 수집합니다. 예를 들어 텔레그램에 읽지 않은 글이 1029개로 표시되고 앱 슬라이더가 100이면, 읽지 않은 1029개 중 최신 100개만 가져옵니다. 이 경우 슬라이더는 전체 최신 글 수가 아니라 "읽지 않은 글 중 가져올 최대 게시글 수"입니다.
+앱의 `가져올 최신 게시글 수`는 텔레그램 채널에 올라온 최신 게시글 N개를 의미합니다. 텔레그램 앱에 표시되는 읽지 않은 글 수와는 무관합니다.
 
 상세분석 후보 조건은 다음 환경변수로 조정합니다.
 
