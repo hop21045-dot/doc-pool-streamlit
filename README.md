@@ -48,12 +48,12 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini
 MAX_PDF_TEXT_CHARS=120000
-MIN_TELEGRAM_MESSAGE_ID=1030
+COLLECT_UNREAD_ONLY=true
 ```
 
 `GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
 
-`MIN_TELEGRAM_MESSAGE_ID=1030`은 DOC_POOL에서 1029번까지 이미 읽은 상태로 보고, 1030번 이후 글만 수집한다는 뜻입니다.
+`COLLECT_UNREAD_ONLY=true`이면 Telegram API 사용 시 채널의 읽지 않은 글 개수 안에서만 수집합니다. 예를 들어 텔레그램에 읽지 않은 글이 1029개로 표시되고 앱 슬라이더가 100이면, 읽지 않은 1029개 중 최신 100개만 가져옵니다.
 
 ## 분류 섹터
 
