@@ -42,7 +42,7 @@ load_env_file()
 CHANNEL = "DOC_POOL"
 TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v2"
+GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v3"
 MAX_PDF_TEXT_CHARS = int(os.getenv("MAX_PDF_TEXT_CHARS", "120000"))
 COLLECT_UNREAD_ONLY = os.getenv("COLLECT_UNREAD_ONLY", "true").strip().lower() not in (
     "0",
@@ -57,7 +57,15 @@ DETAIL_TARGET_SECTORS = [
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
-READING_VALUE_ORDER = {"스킵 가능": 1, "낮음": 2, "참고": 3, "권장": 4, "필독": 5}
+READING_VALUE_ORDER = {
+    "스킵 가능": 1,
+    "매우 낮음": 2,
+    "낮음": 3,
+    "참고": 4,
+    "권장": 5,
+    "강력 권장": 6,
+    "필독": 7,
+}
 
 
 SECTOR_KEYWORDS: dict[str, list[str]] = {
@@ -486,7 +494,7 @@ def parse_json_object(text: str) -> dict[str, Any]:
 
 
 def normalize_classification(result: dict[str, Any]) -> dict[str, Any]:
-    allowed_values = {"필독", "권장", "참고", "낮음", "스킵 가능"}
+    allowed_values = {"필독", "강력 권장", "권장", "참고", "낮음", "매우 낮음", "스킵 가능"}
     allowed_ratings = {"A+", "A", "B+", "B", "C"}
     result = dict(result)
     if result.get("reading_value") not in allowed_values:
@@ -497,6 +505,7 @@ def normalize_classification(result: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("stock_name", "미상")
     result.setdefault("stock_code", "000000")
     result.setdefault("report_title", "")
+    result.setdefault("rating_reason", "")
     result.setdefault("one_line_summary", "")
     result.setdefault("investment_idea", [])
     result.setdefault("industry_business", "N/A")
@@ -686,6 +695,7 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
         stock_name = ""
         stock_code = ""
         title = post.title
+        rating_reason = ""
         detail = ""
         industry_business = ""
         earnings_signal = ""
@@ -700,6 +710,7 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
             sector = str(result.get("sector") or sector)
             value = str(result.get("reading_value") or value)
             rating = str(result.get("rating") or "")
+            rating_reason = str(result.get("rating_reason") or "")
             stock_name = str(result.get("stock_name") or "")
             stock_code = str(result.get("stock_code") or "")
             title = str(result.get("report_title") or post.title)
@@ -725,6 +736,7 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
                 "게시시각": format_datetime(post.posted_at),
                 "섹터": sector,
                 "레이팅": rating,
+                "레이팅 근거": rating_reason,
                 "읽을 가치": value,
                 "상세분석 후보": "Y" if is_detail_candidate(sector, rating, value) else "",
                 "종목명": stock_name,
@@ -784,6 +796,7 @@ def render_cards(df: pd.DataFrame) -> None:
                 part
                 for part in [
                     row["종목명"],
+                    f"레이팅 근거: {row['레이팅 근거']}" if row["레이팅 근거"] else "",
                     row["판단 근거"],
                     row["핵심 아이디어"],
                     row["처리 상태"],
@@ -900,7 +913,7 @@ def main() -> None:
         st.stop()
 
     sectors = ["전체"] + sorted(df["섹터"].unique().tolist())
-    values = ["전체", "필독", "권장", "참고", "낮음", "스킵 가능", "미분류"]
+    values = ["전체", "필독", "강력 권장", "권장", "참고", "낮음", "매우 낮음", "스킵 가능", "미분류"]
     ratings = ["전체", "A+", "A", "B+", "B", "C", "등급 없음"]
 
     filters = st.columns([1.2, 1.2, 1.2, 2])
@@ -928,7 +941,7 @@ def main() -> None:
     metric_cols = st.columns(6)
     metric_cols[0].metric("전체 글", len(df))
     metric_cols[1].metric("필독", int((df["읽을 가치"] == "필독").sum()))
-    metric_cols[2].metric("권장", int((df["읽을 가치"] == "권장").sum()))
+    metric_cols[2].metric("권장+", int(df["읽을 가치"].isin(["필독", "강력 권장", "권장"]).sum()))
     metric_cols[3].metric("상세 후보", int((df["상세분석 후보"] == "Y").sum()))
     metric_cols[4].metric("고유 PDF", unique_pdf_count)
     metric_cols[5].metric("중복 PDF", duplicate_pdf_count)
