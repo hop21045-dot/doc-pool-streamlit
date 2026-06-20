@@ -770,7 +770,7 @@ def render_cards(df: pd.DataFrame) -> None:
                 st.caption(meta)
             if row["상세분석 후보"]:
                 st.caption("상세분석 후보: 설정 조건을 충족했습니다.")
-            if row["PDF 해시"] and row["상세분석 후보"]:
+            if row["PDF 해시"]:
                 button_key = f"gpt-detail-{row['PDF 해시']}"
                 if st.button("GPT 상세분석", key=button_key):
                     with st.spinner("GPT가 PDF 상세분석을 작성하는 중..."):
