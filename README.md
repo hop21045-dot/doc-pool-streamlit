@@ -20,7 +20,8 @@ python make_telegram_session.py
 ## 동작 방식
 
 - 기본 수집 방식은 텔레그램 공개 미리보기 페이지(`https://t.me/s/DOC_POOL`) 파싱입니다.
-- 로그인이나 Telegram API 키 없이 동작하지만, 텔레그램이 공개 미리보기를 제한하면 수집 범위가 줄어들 수 있습니다.
+- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, 인증된 `doc_pool.session` 또는 `TELEGRAM_STRING_SESSION`이 있으면 게시글 수집은 Telethon을 우선 사용합니다.
+- 로그인이나 Telegram API 키 없이도 일부 동작할 수 있지만, 텔레그램이 공개 미리보기를 제한하면 게시글이 비어 보일 수 있습니다.
 - 안정적으로 운영하려면 Telegram API 설정을 권장합니다.
   - `TELEGRAM_API_ID`
   - `TELEGRAM_API_HASH`

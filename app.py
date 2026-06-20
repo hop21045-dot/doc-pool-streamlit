@@ -236,9 +236,19 @@ def normalize_text(text: str) -> str:
 
 
 def fetch_channel_posts(limit: int, classify_pdfs: bool) -> list[ReportPost]:
-    if classify_pdfs and os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH"):
+    if should_use_telethon():
         return asyncio.run(fetch_channel_posts_with_telethon(limit, classify_pdfs))
     return fetch_channel_posts_from_preview(limit)
+
+
+def should_use_telethon() -> bool:
+    if not (os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH")):
+        return False
+    if os.getenv("TELEGRAM_STRING_SESSION"):
+        return True
+    session = os.getenv("TELEGRAM_SESSION", "doc_pool.session")
+    candidates = [session, f"{session}.session"]
+    return any(os.path.exists(candidate) for candidate in candidates)
 
 
 async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> list[ReportPost]:
