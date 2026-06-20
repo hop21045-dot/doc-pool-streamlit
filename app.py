@@ -42,7 +42,7 @@ load_env_file()
 CHANNEL = "DOC_POOL"
 TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v3"
+GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v4"
 MAX_PDF_TEXT_CHARS = int(os.getenv("MAX_PDF_TEXT_CHARS", "120000"))
 COLLECT_UNREAD_ONLY = os.getenv("COLLECT_UNREAD_ONLY", "true").strip().lower() not in (
     "0",
@@ -59,12 +59,10 @@ PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
 READING_VALUE_ORDER = {
     "스킵 가능": 1,
-    "매우 낮음": 2,
-    "낮음": 3,
-    "참고": 4,
-    "권장": 5,
-    "강력 권장": 6,
-    "필독": 7,
+    "참고": 2,
+    "무난": 3,
+    "권장": 4,
+    "필독": 5,
 }
 
 
@@ -494,7 +492,14 @@ def parse_json_object(text: str) -> dict[str, Any]:
 
 
 def normalize_classification(result: dict[str, Any]) -> dict[str, Any]:
-    allowed_values = {"필독", "강력 권장", "권장", "참고", "낮음", "매우 낮음", "스킵 가능"}
+    legacy_value_map = {
+        "강력 권장": "권장",
+        "낮음": "스킵 가능",
+        "매우 낮음": "스킵 가능",
+    }
+    if result.get("reading_value") in legacy_value_map:
+        result["reading_value"] = legacy_value_map[result["reading_value"]]
+    allowed_values = {"필독", "권장", "무난", "참고", "스킵 가능"}
     allowed_ratings = {"A+", "A", "B+", "B", "C"}
     result = dict(result)
     if result.get("reading_value") not in allowed_values:
@@ -614,8 +619,8 @@ def rate_reading_value(text: str, sector: str) -> tuple[str, str]:
     if medium_hits:
         return "참고", f"업데이트성 자료 신호({', '.join(medium_hits[:3])})가 있습니다."
     if len(text) >= 180:
-        return "권장", "본문 정보량이 충분해 빠르게 확인할 가치가 있습니다."
-    return "낮음", "제목/짧은 코멘트 중심이라 우선순위는 낮게 봅니다."
+        return "무난", "읽을 정보는 충분하지만 투자판단을 바꿀 정도의 신호는 제한적입니다."
+    return "스킵 가능", "제목/짧은 코멘트 중심이라 우선순위는 낮게 봅니다."
 
 
 def heuristic_summary(text: str) -> str:
@@ -867,7 +872,7 @@ def main() -> None:
     with st.sidebar:
         st.header("수집 설정")
         if COLLECT_UNREAD_ONLY:
-            st.caption("Telegram API 사용 시 읽지 않은 글 범위 안에서만 수집")
+            st.caption("Telegram API 사용 시 읽지 않은 글 중 최대 N개 수집")
         else:
             st.caption("최신 글 기준으로 수집")
         st.caption(
@@ -875,7 +880,8 @@ def main() -> None:
             f"{', '.join(DETAIL_TARGET_SECTORS) if DETAIL_TARGET_SECTORS else '전체 섹터'} / "
             "A+ 또는 필독 또는 B+ 이상이면서 권장/필독"
         )
-        limit = st.slider("가져올 게시글 수", min_value=10, max_value=2000, value=100, step=10)
+        slider_label = "가져올 게시글 수" if not COLLECT_UNREAD_ONLY else "읽지 않은 글 중 가져올 최대 게시글 수"
+        limit = st.slider(slider_label, min_value=10, max_value=2000, value=100, step=10)
         classify_pdfs = st.toggle(
             "Gemini PDF 분류 실행",
             value=False,
@@ -913,7 +919,7 @@ def main() -> None:
         st.stop()
 
     sectors = ["전체"] + sorted(df["섹터"].unique().tolist())
-    values = ["전체", "필독", "강력 권장", "권장", "참고", "낮음", "매우 낮음", "스킵 가능", "미분류"]
+    values = ["전체", "필독", "권장", "무난", "참고", "스킵 가능", "미분류"]
     ratings = ["전체", "A+", "A", "B+", "B", "C", "등급 없음"]
 
     filters = st.columns([1.2, 1.2, 1.2, 2])
@@ -941,7 +947,7 @@ def main() -> None:
     metric_cols = st.columns(6)
     metric_cols[0].metric("전체 글", len(df))
     metric_cols[1].metric("필독", int((df["읽을 가치"] == "필독").sum()))
-    metric_cols[2].metric("권장+", int(df["읽을 가치"].isin(["필독", "강력 권장", "권장"]).sum()))
+    metric_cols[2].metric("권장+", int(df["읽을 가치"].isin(["필독", "권장"]).sum()))
     metric_cols[3].metric("상세 후보", int((df["상세분석 후보"] == "Y").sum()))
     metric_cols[4].metric("고유 PDF", unique_pdf_count)
     metric_cols[5].metric("중복 PDF", duplicate_pdf_count)
