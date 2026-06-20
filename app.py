@@ -772,11 +772,12 @@ def render_cards(df: pd.DataFrame) -> None:
                 st.caption("상세분석 후보: 설정 조건을 충족했습니다.")
             if row["PDF 해시"]:
                 button_key = f"gpt-detail-{row['PDF 해시']}"
-                if st.button("GPT 상세분석", key=button_key):
+                result_key = f"gpt-detail-result-{row['PDF 해시']}"
+                if st.button("요니쿠니식 GPT 상세분석", key=button_key):
                     with st.spinner("GPT가 PDF 상세분석을 작성하는 중..."):
-                        st.session_state[button_key] = analyze_report_with_openai(row["PDF 해시"])
-                if st.session_state.get(button_key):
-                    st.markdown(st.session_state[button_key])
+                        st.session_state[result_key] = analyze_report_with_openai(row["PDF 해시"])
+                if st.session_state.get(result_key):
+                    st.markdown(st.session_state[result_key])
             with st.expander("원문 보기"):
                 st.write(row["본문"])
                 if row["핵심 리스크"]:
