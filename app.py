@@ -42,6 +42,7 @@ load_env_file()
 CHANNEL = "DOC_POOL"
 TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v2"
 MAX_PDF_TEXT_CHARS = int(os.getenv("MAX_PDF_TEXT_CHARS", "120000"))
 COLLECT_UNREAD_ONLY = os.getenv("COLLECT_UNREAD_ONLY", "true").strip().lower() not in (
     "0",
@@ -323,12 +324,18 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
                         )
                         cached = get_cached_classification(pdf_hash)
                         if cached:
-                            classification = cached.result
-                            classification_model = cached.model
-                            processing_note = "중복 PDF: 기존 분류 재사용" if duplicate_pdf else "기존 분류 재사용"
-                        else:
-                            extracted_text = extract_pdf_text(pdf_bytes)
-                            save_extracted_text(pdf_hash, extracted_text)
+                            if cached.result.get("classifier_version") == GEMINI_CLASSIFIER_VERSION:
+                                classification = cached.result
+                                classification_model = cached.model
+                                processing_note = "중복 PDF: 기존 분류 재사용" if duplicate_pdf else "기존 분류 재사용"
+                            else:
+                                cached = None
+                        if not cached:
+                            stored = get_stored_report(pdf_hash)
+                            extracted_text = stored.extracted_text if stored and stored.extracted_text else ""
+                            if not extracted_text:
+                                extracted_text = extract_pdf_text(pdf_bytes)
+                                save_extracted_text(pdf_hash, extracted_text)
                             if not extracted_text:
                                 processing_note = "PDF 텍스트 추출 실패"
                             elif not os.getenv("GEMINI_API_KEY"):
@@ -339,6 +346,7 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
                                     file_name=document_name,
                                     message_text=message.message or "",
                                 )
+                                classification["classifier_version"] = GEMINI_CLASSIFIER_VERSION
                                 classification_model = GEMINI_MODEL
                                 save_classification(
                                     pdf_hash=pdf_hash,
@@ -347,7 +355,7 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
                                     model=GEMINI_MODEL,
                                     result=classification,
                                 )
-                                processing_note = "Gemini 신규 분류"
+                                processing_note = "Gemini 신규 분류" if not duplicate_pdf else "중복 PDF: 새 기준으로 재분류"
                 except Exception as exc:
                     processing_note = f"PDF 처리 실패: {exc}"
 
@@ -493,8 +501,11 @@ def normalize_classification(result: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("report_title", "")
     result.setdefault("one_line_summary", "")
     result.setdefault("investment_idea", [])
+    result.setdefault("industry_business", "N/A")
     result.setdefault("earnings_signal", "N/A")
+    result.setdefault("financial_quality", "N/A")
     result.setdefault("valuation_view", "N/A")
+    result.setdefault("momentum_risks", "N/A")
     result.setdefault("key_risks", [])
     result.setdefault("why_read", "")
     result.setdefault("needs_check", [])
@@ -677,6 +688,11 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
         stock_code = ""
         title = post.title
         detail = ""
+        industry_business = ""
+        earnings_signal = ""
+        financial_quality = ""
+        valuation_view = ""
+        momentum_risks = ""
         risks = ""
         needs_check = ""
 
@@ -691,6 +707,11 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
             summary = str(result.get("one_line_summary") or summary)
             reason = str(result.get("why_read") or reason)
             detail = list_to_text(result.get("investment_idea"))
+            industry_business = str(result.get("industry_business") or "")
+            earnings_signal = str(result.get("earnings_signal") or "")
+            financial_quality = str(result.get("financial_quality") or "")
+            valuation_view = str(result.get("valuation_view") or "")
+            momentum_risks = str(result.get("momentum_risks") or "")
             risks = list_to_text(result.get("key_risks"))
             needs_check = list_to_text(result.get("needs_check"))
 
@@ -713,6 +734,11 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
                 "요약": summary,
                 "판단 근거": reason,
                 "핵심 아이디어": detail,
+                "산업/비즈니스": industry_business,
+                "실적 변화 신호": earnings_signal,
+                "재무/수익성": financial_quality,
+                "밸류에이션": valuation_view,
+                "모멘텀/리스크": momentum_risks,
                 "핵심 리스크": risks,
                 "확인 필요": needs_check,
                 "키워드": ", ".join(hits),
@@ -780,6 +806,21 @@ def render_cards(df: pd.DataFrame) -> None:
                     st.markdown(st.session_state[result_key])
             with st.expander("원문 보기"):
                 st.write(row["본문"])
+                if row["산업/비즈니스"]:
+                    st.markdown("**산업과 비즈니스 모델**")
+                    st.write(row["산업/비즈니스"])
+                if row["실적 변화 신호"]:
+                    st.markdown("**실적 변화 신호**")
+                    st.write(row["실적 변화 신호"])
+                if row["재무/수익성"]:
+                    st.markdown("**재무 건전성 및 수익성**")
+                    st.write(row["재무/수익성"])
+                if row["밸류에이션"]:
+                    st.markdown("**밸류에이션**")
+                    st.write(row["밸류에이션"])
+                if row["모멘텀/리스크"]:
+                    st.markdown("**모멘텀과 리스크**")
+                    st.write(row["모멘텀/리스크"])
                 if row["핵심 리스크"]:
                     st.write("핵심 리스크:", row["핵심 리스크"])
                 if row["확인 필요"]:
