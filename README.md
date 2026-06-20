@@ -1,4 +1,4 @@
-# DOC_POOL 리포트 분류 Streamlit 앱
+# 증권사 리포트 가치 매기기 Streamlit 앱
 
 텔레그램 공개 채널 `https://t.me/DOC_POOL`에 올라오는 증권사 리포트 게시글을 읽어 섹터별로 분류하고, 읽어볼 가치와 짧은 요약을 보여주는 Streamlit 앱입니다.
 

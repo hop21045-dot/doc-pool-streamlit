@@ -847,8 +847,8 @@ def value_label(value: str) -> str:
 
 
 def main() -> None:
-    st.set_page_config(page_title="DOC_POOL 리포트 분류", page_icon="📄", layout="wide")
-    st.title("DOC_POOL 리포트 분류")
+    st.set_page_config(page_title="증권사 리포트 가치 매기기", page_icon="📄", layout="wide")
+    st.title("증권사 리포트 가치 매기기")
     st.caption("텔레그램 공개 채널 게시글을 섹터별로 분류하고 읽어볼 우선순위와 요약을 보여줍니다.")
 
     with st.sidebar:
