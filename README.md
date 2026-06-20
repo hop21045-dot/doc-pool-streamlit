@@ -49,9 +49,7 @@ OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini
 MAX_PDF_TEXT_CHARS=120000
 COLLECT_UNREAD_ONLY=true
-DETAIL_TARGET_SECTORS=반도체
-DETAIL_MIN_RATING=A
-DETAIL_MIN_READING_VALUE=권장
+DETAIL_TARGET_SECTORS=
 ```
 
 `GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
@@ -60,9 +58,11 @@ DETAIL_MIN_READING_VALUE=권장
 
 상세분석 후보 조건은 다음 환경변수로 조정합니다.
 
-- `DETAIL_TARGET_SECTORS=반도체`: 반도체 섹터만 상세분석 후보로 표시합니다. 여러 섹터는 쉼표로 구분합니다.
-- `DETAIL_MIN_RATING=A`: A 이상만 상세분석 후보입니다.
-- `DETAIL_MIN_READING_VALUE=권장`: 권장 이상만 상세분석 후보입니다.
+- `DETAIL_TARGET_SECTORS=`: 비워두면 전체 섹터를 대상으로 상세분석 후보를 표시합니다. 특정 섹터만 보려면 `반도체,AI/전력인프라`처럼 쉼표로 구분합니다.
+- 상세분석 후보는 다음 조건 중 하나를 만족하면 표시됩니다.
+  - 레이팅 `A+`
+  - 읽을 가치 `필독`
+  - 레이팅 `B+` 이상이면서 읽을 가치 `권장` 또는 `필독`
 
 Gemini PDF 분류는 모든 수집 PDF에 대해 1차 JSON 분류를 수행하고, 상세분석 후보 조건은 화면에서 우선적으로 눈여겨볼 리포트를 표시하는 용도입니다. GPT 상세분석 버튼은 PDF 본문이 저장된 리포트라면 레이팅/읽을 가치와 무관하게 직접 실행할 수 있습니다. 버튼을 누르기 전에는 GPT 비용이 발생하지 않습니다.
 

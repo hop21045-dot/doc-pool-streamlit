@@ -51,11 +51,9 @@ COLLECT_UNREAD_ONLY = os.getenv("COLLECT_UNREAD_ONLY", "true").strip().lower() n
 )
 DETAIL_TARGET_SECTORS = [
     item.strip()
-    for item in os.getenv("DETAIL_TARGET_SECTORS", "반도체").split(",")
+    for item in os.getenv("DETAIL_TARGET_SECTORS", "").split(",")
     if item.strip()
 ]
-DETAIL_MIN_RATING = os.getenv("DETAIL_MIN_RATING", "A").strip()
-DETAIL_MIN_READING_VALUE = os.getenv("DETAIL_MIN_READING_VALUE", "권장").strip()
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
@@ -517,11 +515,12 @@ def is_detail_candidate(sector: str, rating: str, reading_value: str) -> bool:
         return False
     if DETAIL_TARGET_SECTORS and sector not in DETAIL_TARGET_SECTORS:
         return False
-    min_rating_score = RATING_ORDER.get(DETAIL_MIN_RATING, RATING_ORDER["A"])
-    min_value_score = READING_VALUE_ORDER.get(DETAIL_MIN_READING_VALUE, READING_VALUE_ORDER["권장"])
+    rating_score = RATING_ORDER.get(rating, 0)
+    value_score = READING_VALUE_ORDER.get(reading_value, 0)
     return (
-        RATING_ORDER.get(rating, 0) >= min_rating_score
-        and READING_VALUE_ORDER.get(reading_value, 0) >= min_value_score
+        rating == "A+"
+        or reading_value == "필독"
+        or (rating_score >= RATING_ORDER["B+"] and value_score >= READING_VALUE_ORDER["권장"])
     )
 
 
@@ -861,7 +860,7 @@ def main() -> None:
         st.caption(
             "상세분석 후보: "
             f"{', '.join(DETAIL_TARGET_SECTORS) if DETAIL_TARGET_SECTORS else '전체 섹터'} / "
-            f"레이팅 {DETAIL_MIN_RATING} 이상 / 읽을 가치 {DETAIL_MIN_READING_VALUE} 이상"
+            "A+ 또는 필독 또는 B+ 이상이면서 권장/필독"
         )
         limit = st.slider("가져올 게시글 수", min_value=10, max_value=2000, value=100, step=10)
         classify_pdfs = st.toggle(
@@ -923,12 +922,16 @@ def main() -> None:
         mask = filtered.apply(lambda row: query.lower() in " ".join(map(str, row)).lower(), axis=1)
         filtered = filtered[mask]
 
-    metric_cols = st.columns(5)
-    metric_cols[0].metric("전체", len(df))
+    unique_pdf_count = filtered["PDF 해시"].replace("", pd.NA).dropna().nunique()
+    duplicate_pdf_count = int((filtered["중복 PDF"] == "Y").sum())
+
+    metric_cols = st.columns(6)
+    metric_cols[0].metric("전체 글", len(df))
     metric_cols[1].metric("필독", int((df["읽을 가치"] == "필독").sum()))
     metric_cols[2].metric("권장", int((df["읽을 가치"] == "권장").sum()))
     metric_cols[3].metric("상세 후보", int((df["상세분석 후보"] == "Y").sum()))
-    metric_cols[4].metric("PDF 분류", int((df["분류 모델"] != "").sum()))
+    metric_cols[4].metric("고유 PDF", unique_pdf_count)
+    metric_cols[5].metric("중복 PDF", duplicate_pdf_count)
 
     tab_cards, tab_table, tab_stats = st.tabs(["리포트", "표", "섹터 통계"])
     with tab_cards:
