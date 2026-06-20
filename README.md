@@ -49,11 +49,22 @@ OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini
 MAX_PDF_TEXT_CHARS=120000
 COLLECT_UNREAD_ONLY=true
+DETAIL_TARGET_SECTORS=반도체
+DETAIL_MIN_RATING=A
+DETAIL_MIN_READING_VALUE=권장
 ```
 
 `GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
 
 `COLLECT_UNREAD_ONLY=true`이면 Telegram API 사용 시 채널의 읽지 않은 글 개수 안에서만 수집합니다. 예를 들어 텔레그램에 읽지 않은 글이 1029개로 표시되고 앱 슬라이더가 100이면, 읽지 않은 1029개 중 최신 100개만 가져옵니다.
+
+상세분석 후보 조건은 다음 환경변수로 조정합니다.
+
+- `DETAIL_TARGET_SECTORS=반도체`: 반도체 섹터만 상세분석 후보로 표시합니다. 여러 섹터는 쉼표로 구분합니다.
+- `DETAIL_MIN_RATING=A`: A 이상만 상세분석 후보입니다.
+- `DETAIL_MIN_READING_VALUE=권장`: 권장 이상만 상세분석 후보입니다.
+
+Gemini PDF 분류는 모든 수집 PDF에 대해 1차 JSON 분류를 수행하고, GPT 상세분석은 상세분석 후보 조건을 만족한 리포트에만 버튼이 표시됩니다. 버튼을 누르기 전에는 GPT 비용이 발생하지 않습니다.
 
 ## 분류 섹터
 

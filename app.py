@@ -48,7 +48,17 @@ COLLECT_UNREAD_ONLY = os.getenv("COLLECT_UNREAD_ONLY", "true").strip().lower() n
     "false",
     "no",
 )
+DETAIL_TARGET_SECTORS = [
+    item.strip()
+    for item in os.getenv("DETAIL_TARGET_SECTORS", "반도체").split(",")
+    if item.strip()
+]
+DETAIL_MIN_RATING = os.getenv("DETAIL_MIN_RATING", "A").strip()
+DETAIL_MIN_READING_VALUE = os.getenv("DETAIL_MIN_READING_VALUE", "권장").strip()
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+
+RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
+READING_VALUE_ORDER = {"스킵 가능": 1, "낮음": 2, "참고": 3, "권장": 4, "필독": 5}
 
 
 SECTOR_KEYWORDS: dict[str, list[str]] = {
@@ -491,6 +501,19 @@ def normalize_classification(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def is_detail_candidate(sector: str, rating: str, reading_value: str) -> bool:
+    if not rating or not reading_value:
+        return False
+    if DETAIL_TARGET_SECTORS and sector not in DETAIL_TARGET_SECTORS:
+        return False
+    min_rating_score = RATING_ORDER.get(DETAIL_MIN_RATING, RATING_ORDER["A"])
+    min_value_score = READING_VALUE_ORDER.get(DETAIL_MIN_READING_VALUE, READING_VALUE_ORDER["권장"])
+    return (
+        RATING_ORDER.get(rating, 0) >= min_rating_score
+        and READING_VALUE_ORDER.get(reading_value, 0) >= min_value_score
+    )
+
+
 def fetch_channel_posts_from_preview(limit: int) -> list[ReportPost]:
     headers = {
         "User-Agent": (
@@ -683,6 +706,7 @@ def build_rows(posts: Iterable[ReportPost], use_ai_summary: bool) -> list[dict[s
                 "섹터": sector,
                 "레이팅": rating,
                 "읽을 가치": value,
+                "상세분석 후보": "Y" if is_detail_candidate(sector, rating, value) else "",
                 "종목명": stock_name,
                 "종목코드": stock_code,
                 "제목": title,
@@ -744,7 +768,9 @@ def render_cards(df: pd.DataFrame) -> None:
             )
             if meta:
                 st.caption(meta)
-            if row["PDF 해시"]:
+            if row["상세분석 후보"]:
+                st.caption("상세분석 후보: 설정 조건을 충족했습니다.")
+            if row["PDF 해시"] and row["상세분석 후보"]:
                 button_key = f"gpt-detail-{row['PDF 해시']}"
                 if st.button("GPT 상세분석", key=button_key):
                     with st.spinner("GPT가 PDF 상세분석을 작성하는 중..."):
@@ -790,6 +816,11 @@ def main() -> None:
             st.caption("Telegram API 사용 시 읽지 않은 글 범위 안에서만 수집")
         else:
             st.caption("최신 글 기준으로 수집")
+        st.caption(
+            "상세분석 후보: "
+            f"{', '.join(DETAIL_TARGET_SECTORS) if DETAIL_TARGET_SECTORS else '전체 섹터'} / "
+            f"레이팅 {DETAIL_MIN_RATING} 이상 / 읽을 가치 {DETAIL_MIN_READING_VALUE} 이상"
+        )
         limit = st.slider("가져올 게시글 수", min_value=10, max_value=2000, value=100, step=10)
         classify_pdfs = st.toggle(
             "Gemini PDF 분류 실행",
@@ -850,11 +881,12 @@ def main() -> None:
         mask = filtered.apply(lambda row: query.lower() in " ".join(map(str, row)).lower(), axis=1)
         filtered = filtered[mask]
 
-    metric_cols = st.columns(4)
+    metric_cols = st.columns(5)
     metric_cols[0].metric("전체", len(df))
     metric_cols[1].metric("필독", int((df["읽을 가치"] == "필독").sum()))
     metric_cols[2].metric("권장", int((df["읽을 가치"] == "권장").sum()))
-    metric_cols[3].metric("PDF 분류", int((df["분류 모델"] != "").sum()))
+    metric_cols[3].metric("상세 후보", int((df["상세분석 후보"] == "Y").sum()))
+    metric_cols[4].metric("PDF 분류", int((df["분류 모델"] != "").sum()))
 
     tab_cards, tab_table, tab_stats = st.tabs(["리포트", "표", "섹터 통계"])
     with tab_cards:
