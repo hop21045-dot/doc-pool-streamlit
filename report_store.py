@@ -43,6 +43,10 @@ class SavedItem:
     telegram_link: str
     file_name: str
     pdf_hash: str
+    user_sector: str
+    company_names: str
+    user_tags: str
+    user_note: str
 
 
 @dataclass(frozen=True)
@@ -125,10 +129,21 @@ def ensure_db(path: Path = DB_PATH) -> None:
                 telegram_link TEXT,
                 file_name TEXT,
                 pdf_hash TEXT,
+                user_sector TEXT,
+                company_names TEXT,
+                user_tags TEXT,
+                user_note TEXT,
                 PRIMARY KEY(message_id, channel)
             )
             """
         )
+        saved_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(saved_items)").fetchall()
+        }
+        for column_name in ["user_sector", "company_names", "user_tags", "user_note"]:
+            if column_name not in saved_columns:
+                conn.execute(f"ALTER TABLE saved_items ADD COLUMN {column_name} TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS daily_clippings (
@@ -325,10 +340,23 @@ def save_saved_item(
         conn.execute(
             """
             INSERT OR REPLACE INTO saved_items
-            (message_id, channel, saved_at, posted_at, title, text, telegram_link, file_name, pdf_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (message_id, channel, saved_at, posted_at, title, text, telegram_link, file_name, pdf_hash,
+             user_sector, company_names, user_tags, user_note)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                COALESCE((SELECT user_sector FROM saved_items WHERE message_id = ? AND channel = ?), ''),
+                COALESCE((SELECT company_names FROM saved_items WHERE message_id = ? AND channel = ?), ''),
+                COALESCE((SELECT user_tags FROM saved_items WHERE message_id = ? AND channel = ?), ''),
+                COALESCE((SELECT user_note FROM saved_items WHERE message_id = ? AND channel = ?), '')
+            )
             """,
-            (message_id, channel, now, posted_at, title, text, telegram_link, file_name, pdf_hash),
+            (
+                message_id, channel, now, posted_at, title, text, telegram_link, file_name, pdf_hash,
+                message_id, channel,
+                message_id, channel,
+                message_id, channel,
+                message_id, channel,
+            ),
         )
 
 
@@ -338,12 +366,35 @@ def list_saved_items(path: Path = DB_PATH) -> list[SavedItem]:
         rows = conn.execute(
             """
             SELECT message_id, channel, saved_at, posted_at, title, text,
-                   telegram_link, file_name, COALESCE(pdf_hash, '')
+                   telegram_link, file_name, COALESCE(pdf_hash, ''),
+                   COALESCE(user_sector, ''), COALESCE(company_names, ''),
+                   COALESCE(user_tags, ''), COALESCE(user_note, '')
             FROM saved_items
             ORDER BY COALESCE(posted_at, saved_at) DESC
             """
         ).fetchall()
     return [SavedItem(*row) for row in rows]
+
+
+def update_saved_item_metadata(
+    message_id: str,
+    channel: str,
+    user_sector: str,
+    company_names: str,
+    user_tags: str,
+    user_note: str,
+    path: Path = DB_PATH,
+) -> None:
+    ensure_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE saved_items
+            SET user_sector = ?, company_names = ?, user_tags = ?, user_note = ?
+            WHERE message_id = ? AND channel = ?
+            """,
+            (user_sector, company_names, user_tags, user_note, message_id, channel),
+        )
 
 
 def save_daily_clipping(

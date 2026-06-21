@@ -29,6 +29,7 @@ from report_store import (
     save_detailed_analysis,
     save_extracted_text,
     save_saved_item,
+    update_saved_item_metadata,
 )
 
 
@@ -1356,30 +1357,66 @@ def render_saved_library() -> None:
 
     rows = [
         {
+            "메시지ID": item.message_id,
             "저장시각": item.saved_at,
             "게시시각": format_datetime(item.posted_at),
             "채널": item.channel,
+            "사용자 섹터": item.user_sector,
+            "기업명": item.company_names,
+            "태그": item.user_tags,
             "제목": item.title,
             "파일명": item.file_name,
             "PDF": "Y" if item.pdf_hash else "",
             "링크": item.telegram_link,
             "본문": item.text,
             "PDF 해시": item.pdf_hash,
+            "메모": item.user_note,
         }
         for item in saved_items
     ]
     df = pd.DataFrame(rows)
+    filter_cols = st.columns([1, 1, 2])
+    sector_options = ["전체"] + sorted([value for value in df["사용자 섹터"].dropna().unique().tolist() if value])
+    selected_sector = filter_cols[0].selectbox("사용자 섹터 필터", sector_options)
+    company_query = filter_cols[1].text_input("기업명 검색")
+    text_query = filter_cols[2].text_input("본문/제목/태그 검색")
+    filtered = df.copy()
+    if selected_sector != "전체":
+        filtered = filtered[filtered["사용자 섹터"] == selected_sector]
+    if company_query:
+        filtered = filtered[filtered["기업명"].str.contains(company_query, case=False, na=False)]
+    if text_query:
+        mask = filtered.apply(lambda row: text_query.lower() in " ".join(map(str, row)).lower(), axis=1)
+        filtered = filtered[mask]
+
     st.dataframe(
-        df.drop(columns=["본문", "PDF 해시"]),
+        filtered.drop(columns=["본문", "PDF 해시", "메시지ID", "메모"]),
         use_container_width=True,
         hide_index=True,
         column_config={"링크": st.column_config.LinkColumn("링크")},
     )
-    for _, row in df.head(30).iterrows():
+    for _, row in filtered.head(50).iterrows():
         with st.expander(f"{row['게시시각']} | {row['제목']}"):
+            st.markdown(f"[원문 링크 열기]({row['링크']})")
             st.write(row["본문"])
             if row["PDF 해시"]:
                 st.caption(f"PDF 해시: {row['PDF 해시']}")
+            with st.form(f"saved-meta-{row['채널']}-{row['메시지ID']}"):
+                form_cols = st.columns([1, 1, 1])
+                user_sector = form_cols[0].text_input("관련 섹터", value=row["사용자 섹터"])
+                company_names = form_cols[1].text_input("관련 기업명", value=row["기업명"])
+                user_tags = form_cols[2].text_input("태그", value=row["태그"])
+                user_note = st.text_area("메모", value=row["메모"], height=100)
+                if st.form_submit_button("카테고리 저장"):
+                    update_saved_item_metadata(
+                        message_id=row["메시지ID"],
+                        channel=row["채널"],
+                        user_sector=user_sector,
+                        company_names=company_names,
+                        user_tags=user_tags,
+                        user_note=user_note,
+                    )
+                    st.success("저장했습니다. 새로고침하면 표에 반영됩니다.")
 
 
 def render_daily_clipping() -> None:
@@ -1541,17 +1578,15 @@ def render_report_classifier() -> None:
 def main() -> None:
     st.set_page_config(page_title="증권사 리포트 가치 매기기", page_icon="📄", layout="wide")
     st.title("증권사 리포트 가치 매기기")
-    st.caption("저장한 리포트와 섹터별 데일리 클리핑을 누적 관리합니다.")
+    st.caption("하트/저장 글과 섹터별 데일리 클리핑을 누적 관리합니다.")
 
     with st.sidebar:
-        page = st.radio("화면", ["저장함", "데일리 클리핑", "DOC_POOL 분류"], index=0)
+        page = st.radio("화면", ["저장함", "데일리 클리핑"], index=0)
 
     if page == "저장함":
         render_saved_library()
     elif page == "데일리 클리핑":
         render_daily_clipping()
-    else:
-        render_report_classifier()
 
 
 @st.cache_data(ttl=300, show_spinner="텔레그램 채널을 읽는 중...")
