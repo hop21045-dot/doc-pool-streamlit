@@ -493,7 +493,7 @@ async def collect_sector_posts_with_telethon(
                             posted_at=message.date.isoformat() if message.date else "",
                             title=extract_title(raw_text),
                             text=raw_text,
-                            link=f"https://t.me/{channel}/{message.id}",
+                            link=build_telegram_message_link(channel, message),
                             views=str(message.views or ""),
                             file_name=document_name,
                         )
@@ -504,6 +504,12 @@ async def collect_sector_posts_with_telethon(
                 st.warning(f"텔레그램 채널을 건너뜁니다: @{channel} ({exc})")
                 continue
     return posts
+
+
+def build_telegram_message_link(channel: str, message: object) -> str:
+    if channel.lower().endswith("bot"):
+        return ""
+    return f"https://t.me/{channel}/{message.id}"
 
 
 def fetch_shipbuilding_news_posts(clip_date: date) -> list[ReportPost]:
@@ -575,7 +581,7 @@ def generate_daily_clipping(sector: str, clip_date: date, max_items: int = 15) -
             f"[{idx}] {post.title}\n"
             f"- 채널: {post.channel}\n"
             f"- 시간: {format_datetime(post.posted_at)}\n"
-            f"- 링크: {post.link}\n"
+            f"- 출처: {format_source_reference(post)}\n"
             f"- 본문: {post.text[:1200]}"
             for idx, post in enumerate(posts, start=1)
         ]
@@ -610,14 +616,20 @@ def build_heuristic_daily_summary(sector: str, clip_date: date, posts: list[Repo
         lines.extend(
             [
                 f"## {idx}. {post.title}",
-                f"- 출처: {post.link}",
+                f"- 출처: {format_source_reference(post)}",
                 f"- 시간: {format_datetime(post.posted_at)}",
                 f"- 요약: {heuristic_summary(post.text)}",
-                "- 검증 코멘트: 원문 링크 확인 필요",
+                "- 검증 코멘트: 출처 원문 확인 필요",
                 "",
             ]
         )
     return "\n".join(lines)
+
+
+def format_source_reference(post: ReportPost) -> str:
+    if post.link:
+        return post.link
+    return f"@{post.channel} 메시지 {post.message_id} (봇/비공개 대화라 직접 링크 없음)"
 
 
 def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str, max_items: int) -> str:
@@ -649,7 +661,8 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
         "아래 수집 원문 묶음(텔레그램/뉴스 RSS)만 근거로 Markdown 데일리 노트를 작성해라. "
         f"{company_rule}"
         "확인되지 않은 내용은 단정하지 말고 '확인 필요'로 표시해라. "
-        "중복 이슈는 하나로 묶고, 각 항목에는 출처 번호와 링크를 남겨라. "
+        "중복 이슈는 하나로 묶고, 각 항목에는 출처 번호와 출처 정보를 남겨라. "
+        "원문에 '직접 링크 없음'이라고 표시된 출처는 임의로 t.me 링크를 만들지 말고 그 문구를 그대로 남겨라. "
         "각 항목은 '무슨 일', '투자적 의미', '검증/추적 포인트'를 포함해라. "
         f"중요도 기준으로 최대 {max_items}개만 선별해라.\n\n"
         "출력 형식:\n"
@@ -689,7 +702,7 @@ async def persist_message_as_saved_item(client: object, channel: str, message: o
         return 0
 
     message_id = str(message.id)
-    link = f"https://t.me/{channel}/{message_id}"
+    link = build_telegram_message_link(channel, message)
     pdf_hash = ""
     if document_name.lower().endswith(".pdf"):
         try:
@@ -1474,6 +1487,7 @@ def render_saved_library() -> None:
             "파일명": item.file_name,
             "PDF": "Y" if item.pdf_hash else "",
             "링크": item.telegram_link,
+            "출처": item.telegram_link or f"@{item.channel} 메시지 {item.message_id}",
             "본문": item.text,
             "PDF 해시": item.pdf_hash,
             "메모": item.user_note,
@@ -1496,14 +1510,16 @@ def render_saved_library() -> None:
         filtered = filtered[mask]
 
     st.dataframe(
-        filtered.drop(columns=["본문", "PDF 해시", "메시지ID", "메모"]),
+        filtered.drop(columns=["본문", "PDF 해시", "메시지ID", "메모", "링크"]),
         use_container_width=True,
         hide_index=True,
-        column_config={"링크": st.column_config.LinkColumn("링크")},
     )
     for _, row in filtered.head(50).iterrows():
         with st.expander(f"{row['게시시각']} | {row['제목']}"):
-            st.markdown(f"[원문 링크 열기]({row['링크']})")
+            if row["링크"]:
+                st.markdown(f"[원문 링크 열기]({row['링크']})")
+            else:
+                st.caption(f"직접 링크 없음: @{row['채널']} 메시지 {row['메시지ID']}")
             st.write(row["본문"])
             if row["PDF 해시"]:
                 st.caption(f"PDF 해시: {row['PDF 해시']}")
