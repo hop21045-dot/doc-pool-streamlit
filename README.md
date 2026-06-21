@@ -28,10 +28,12 @@ python make_telegram_session.py
   - `TELEGRAM_SESSION` 선택값, 기본값은 `doc_pool.session`
   - `TELEGRAM_STRING_SESSION` 선택값, Streamlit Cloud 같은 배포 환경에서 파일 세션 대신 사용
 - Telegram API 설정이 있고 앱에서 `Gemini PDF 분류 실행`을 켜면 PDF를 다운로드해 본문을 추출하고 Gemini로 요니쿠니봇식 7개 항목 축약 분석을 수행합니다.
+- 사이드바의 `기간 지정`을 켜면 지정한 시작일~종료일 범위의 채널 글을 수집할 수 있습니다. Telegram API 모드에서는 해당 기간을 직접 훑고, 공개 미리보기 모드에서는 가져온 최신 글 안에서만 필터링됩니다.
 - Streamlit 앱 안에서는 Telegram 전화번호 인증을 받지 않습니다. `make_telegram_session.py`로 세션을 먼저 만든 뒤 앱을 실행하세요.
 - 동일 PDF는 SHA-256 해시로 중복 체크합니다. 한 번 분류된 PDF는 다시 올라와도 기존 결과를 재사용합니다.
 - `GEMINI_API_KEY`가 없으면 PDF 다운로드/중복 등록까지만 가능하고 Gemini 분류는 실행되지 않습니다.
 - `OPENAI_API_KEY`가 있으면 원하는 리포트 카드에서 `GPT 상세분석`을 눌러 해당 PDF만 심층 분석할 수 있습니다. GPT는 Gemini 1차 분석 JSON과 PDF 본문을 함께 받아 교차검증, 레이팅/읽어볼 가치 재판정, 심층 보완 분석을 수행합니다.
+- GPT 상세분석 결과는 `요쿠위키 복사용` 영역에서 메타 정보가 포함된 Markdown 형태로 복사하거나 `.md` 파일로 받을 수 있습니다.
 - GPT 상세분석 결과도 SQLite에 저장되어 같은 모델/프롬프트 방식으로 다시 누르면 재사용됩니다.
 - GPT 상세분석은 `prompts/report_detail.md`의 Gemini 교차검증 + 7개 목차 프롬프트를 따릅니다. 현재 앱은 저장된 PDF 본문을 기반으로 분석하며, DART/뉴스/IR 웹 검색은 자동 수집하지 않으므로 PDF에 없는 최신 외부 데이터는 `확인 필요`로 표시하게 했습니다.
 - Gemini PDF 분류를 실행하지 않으면 읽을 가치는 `미분류`로 표시됩니다. 요니쿠니봇식 판단은 PDF 본문 분석 후에만 표시됩니다.

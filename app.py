@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 from report_store import (
     get_detailed_analysis,
@@ -250,10 +252,18 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def fetch_channel_posts(limit: int, classify_pdfs: bool) -> list[ReportPost]:
+def fetch_channel_posts(
+    limit: int,
+    classify_pdfs: bool,
+    start_date_text: str = "",
+    end_date_text: str = "",
+) -> list[ReportPost]:
     if should_use_telethon():
-        return asyncio.run(fetch_channel_posts_with_telethon(limit, classify_pdfs))
-    return fetch_channel_posts_from_preview(limit)
+        return asyncio.run(
+            fetch_channel_posts_with_telethon(limit, classify_pdfs, start_date_text, end_date_text)
+        )
+    posts = fetch_channel_posts_from_preview(limit)
+    return filter_posts_by_date(posts, start_date_text, end_date_text)
 
 
 def should_use_telethon() -> bool:
@@ -266,7 +276,12 @@ def should_use_telethon() -> bool:
     return any(os.path.exists(candidate) for candidate in candidates)
 
 
-async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> list[ReportPost]:
+async def fetch_channel_posts_with_telethon(
+    limit: int,
+    classify_pdfs: bool,
+    start_date_text: str = "",
+    end_date_text: str = "",
+) -> list[ReportPost]:
     from telethon import TelegramClient
     from telethon.sessions import StringSession
 
@@ -276,6 +291,13 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
     string_session = os.getenv("TELEGRAM_STRING_SESSION")
     session_arg = StringSession(string_session) if string_session else session
     posts: list[ReportPost] = []
+    start_day = parse_date_text(start_date_text)
+    end_day = parse_date_text(end_date_text)
+    kst = ZoneInfo("Asia/Seoul")
+    offset_date = None
+    if end_day:
+        end_exclusive = datetime.combine(end_day + timedelta(days=1), time.min, tzinfo=kst)
+        offset_date = end_exclusive.astimezone(timezone.utc)
 
     client = TelegramClient(session_arg, api_id, api_hash)
     async with client:
@@ -288,7 +310,14 @@ async def fetch_channel_posts_with_telethon(limit: int, classify_pdfs: bool) -> 
         if effective_limit <= 0:
             return []
 
-        async for message in client.iter_messages(CHANNEL, limit=effective_limit):
+        async for message in client.iter_messages(CHANNEL, limit=None, offset_date=offset_date):
+            message_day = message.date.astimezone(kst).date() if message.date else None
+            if start_day and message_day and message_day < start_day:
+                break
+            if end_day and message_day and message_day > end_day:
+                continue
+            if len(posts) >= effective_limit:
+                break
             text_parts = [message.message or ""]
             document_name = get_telethon_document_name(message)
             if document_name:
@@ -770,6 +799,102 @@ def format_datetime(value: str) -> str:
         return value
 
 
+def parse_date_text(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def post_date_kst(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.astimezone(ZoneInfo("Asia/Seoul")).date()
+    except ValueError:
+        return None
+
+
+def filter_posts_by_date(
+    posts: list[ReportPost],
+    start_date_text: str = "",
+    end_date_text: str = "",
+) -> list[ReportPost]:
+    start_day = parse_date_text(start_date_text)
+    end_day = parse_date_text(end_date_text)
+    if not start_day and not end_day:
+        return posts
+
+    filtered = []
+    for post in posts:
+        posted_day = post_date_kst(post.posted_at)
+        if not posted_day:
+            continue
+        if start_day and posted_day < start_day:
+            continue
+        if end_day and posted_day > end_day:
+            continue
+        filtered.append(post)
+    return filtered
+
+
+def safe_file_name(value: str) -> str:
+    cleaned = re.sub(r"[\\/:*?\"<>|]+", "_", value or "report")
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("_")
+    return cleaned[:80] or "report"
+
+
+def build_wiki_text(row: pd.Series, analysis: str) -> str:
+    meta_lines = [
+        f"- 출처: {row['링크']}",
+        f"- 게시시각: {row['게시시각'] or '미상'}",
+        f"- 섹터: {row['섹터'] or '미분류'}",
+        f"- 레이팅: {row['레이팅'] or '등급 없음'}",
+        f"- 읽을 가치: {row['읽을 가치'] or '미분류'}",
+    ]
+    if row["레이팅 근거"]:
+        meta_lines.append(f"- 레이팅 근거: {row['레이팅 근거']}")
+    if row["파일명"]:
+        meta_lines.append(f"- 파일명: {row['파일명']}")
+
+    return "\n".join(
+        [
+            f"# {row['제목']}",
+            "",
+            "## 메타",
+            *meta_lines,
+            "",
+            "## GPT 상세분석",
+            analysis.strip(),
+            "",
+        ]
+    )
+
+
+def render_clipboard_button(text: str, key: str) -> None:
+    payload = html.escape(json.dumps(text, ensure_ascii=False), quote=True)
+    status_id = f"copy-status-{key}"
+    components.html(
+        f"""
+        <button
+          style="border:1px solid #d0d5dd;border-radius:8px;padding:8px 12px;background:white;cursor:pointer;"
+          data-copy="{payload}"
+          onclick="navigator.clipboard.writeText(JSON.parse(this.dataset.copy)).then(
+            () => document.getElementById('{status_id}').innerText = '복사 완료',
+            () => document.getElementById('{status_id}').innerText = '복사 실패: 아래 텍스트를 직접 복사하세요'
+          )"
+        >
+          클립보드에 복사
+        </button>
+        <span id="{status_id}" style="margin-left:10px;color:#667085;font-size:14px;"></span>
+        """,
+        height=44,
+    )
+
+
 def render_cards(df: pd.DataFrame) -> None:
     for _, row in df.iterrows():
         with st.container(border=True):
@@ -803,7 +928,26 @@ def render_cards(df: pd.DataFrame) -> None:
                     with st.spinner("GPT가 PDF 상세분석을 작성하는 중..."):
                         st.session_state[result_key] = analyze_report_with_openai(row["PDF 해시"])
                 if st.session_state.get(result_key):
-                    st.markdown(st.session_state[result_key])
+                    analysis = st.session_state[result_key]
+                    st.markdown(analysis)
+                    wiki_text = build_wiki_text(row, analysis)
+                    with st.expander("요쿠위키 복사용", expanded=False):
+                        copy_key = safe_file_name(row["PDF 해시"] or row["제목"])
+                        render_clipboard_button(wiki_text, copy_key)
+                        st.text_area(
+                            "복사용 Markdown",
+                            value=wiki_text,
+                            height=320,
+                            key=f"wiki-copy-text-{copy_key}",
+                            help="복사 버튼이 동작하지 않으면 이 텍스트를 직접 선택해 복사하세요.",
+                        )
+                        st.download_button(
+                            "Markdown 파일로 받기",
+                            data=wiki_text,
+                            file_name=f"{safe_file_name(row['제목'])}.md",
+                            mime="text/markdown",
+                            key=f"wiki-download-{copy_key}",
+                        )
             with st.expander("원문 보기"):
                 st.write(row["본문"])
                 if row["산업/비즈니스"]:
@@ -861,6 +1005,23 @@ def main() -> None:
             "A+ 또는 필독 또는 B+ 이상이면서 권장/필독"
         )
         limit = st.slider("가져올 최신 게시글 수", min_value=10, max_value=2000, value=100, step=10)
+        use_date_range = st.toggle(
+            "기간 지정",
+            value=False,
+            help="Telegram API 사용 시 지정 기간의 글을 직접 수집합니다. 공개 미리보기 모드에서는 가져온 최신 글 안에서만 필터링됩니다.",
+        )
+        start_date_text = ""
+        end_date_text = ""
+        if use_date_range:
+            today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+            date_cols = st.columns(2)
+            start_day = date_cols[0].date_input("시작일", value=today - timedelta(days=7))
+            end_day = date_cols[1].date_input("종료일", value=today)
+            start_date_text = start_day.isoformat()
+            end_date_text = end_day.isoformat()
+            if start_day > end_day:
+                st.error("시작일은 종료일보다 늦을 수 없습니다.")
+                st.stop()
         classify_pdfs = st.toggle(
             "Gemini PDF 분류 실행",
             value=False,
@@ -882,7 +1043,7 @@ def main() -> None:
         st.warning("GEMINI_API_KEY가 없어서 PDF 텍스트 추출/중복 등록까지만 가능하고 Gemini 분류는 실행되지 않습니다.")
 
     try:
-        posts = cached_fetch_channel_posts(limit, classify_pdfs)
+        posts = cached_fetch_channel_posts(limit, classify_pdfs, start_date_text, end_date_text)
     except Exception as exc:
         st.error(f"텔레그램 채널을 읽지 못했습니다: {exc}")
         st.stop()
@@ -952,8 +1113,13 @@ def main() -> None:
 
 
 @st.cache_data(ttl=300, show_spinner="텔레그램 채널을 읽는 중...")
-def cached_fetch_channel_posts(limit: int, classify_pdfs: bool) -> list[ReportPost]:
-    return fetch_channel_posts(limit, classify_pdfs)
+def cached_fetch_channel_posts(
+    limit: int,
+    classify_pdfs: bool,
+    start_date_text: str = "",
+    end_date_text: str = "",
+) -> list[ReportPost]:
+    return fetch_channel_posts(limit, classify_pdfs, start_date_text, end_date_text)
 
 
 if __name__ == "__main__":
