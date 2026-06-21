@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
@@ -20,10 +21,14 @@ from report_store import (
     get_cached_classification,
     get_stored_report,
     hash_pdf_bytes,
+    list_daily_clippings,
+    list_saved_items,
     register_pdf,
+    save_daily_clipping,
     save_classification,
     save_detailed_analysis,
     save_extracted_text,
+    save_saved_item,
 )
 
 
@@ -43,6 +48,21 @@ load_env_file()
 
 CHANNEL = "DOC_POOL"
 TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
+WATCH_CHANNELS = [
+    item.strip().lstrip("@")
+    for item in os.getenv("WATCH_CHANNELS", CHANNEL).split(",")
+    if item.strip()
+]
+SAVED_SOURCE_CHANNELS = [
+    item.strip().lstrip("@")
+    for item in os.getenv("SAVED_SOURCE_CHANNELS", "").split(",")
+    if item.strip()
+]
+HEART_REACTIONS = {
+    item.strip()
+    for item in os.getenv("HEART_REACTIONS", "❤️,❤,♥️,♥").split(",")
+    if item.strip()
+}
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_CLASSIFIER_VERSION = "yonikuni-compact-v4"
 MAX_PDF_TEXT_CHARS = int(os.getenv("MAX_PDF_TEXT_CHARS", "120000"))
@@ -52,6 +72,7 @@ DETAIL_TARGET_SECTORS = [
     if item.strip()
 ]
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+PDF_DIR = Path("data/pdfs")
 
 RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
 READING_VALUE_ORDER = {
@@ -230,10 +251,64 @@ VALUE_KEYWORDS = {
     ],
 }
 
+DAILY_KEYWORDS: dict[str, list[str]] = {
+    "반도체": [
+        "반도체",
+        "hbm",
+        "dram",
+        "nand",
+        "파운드리",
+        "tsmc",
+        "삼성전자",
+        "sk하이닉스",
+        "엔비디아",
+        "nvidia",
+        "ai",
+        "데이터센터",
+        "datacenter",
+        "전력",
+        "전력인프라",
+        "인프라",
+        "네오클라우드",
+        "hyperscaler",
+        "capex",
+        "컨퍼런스콜",
+        "수출",
+        "gpu",
+        "asic",
+        "cpo",
+        "npo",
+        "패키징",
+    ],
+    "조선": [
+        "조선",
+        "선박",
+        "수주",
+        "lng선",
+        "lng",
+        "탱커",
+        "컨테이너선",
+        "벌크선",
+        "해양플랜트",
+        "해운",
+        "운임",
+        "신조선가",
+        "클락슨",
+        "Clarksons",
+        "HD현대중공업",
+        "HD한국조선해양",
+        "삼성중공업",
+        "한화오션",
+        "현대미포",
+        "조선업",
+    ],
+}
+
 
 @dataclass(frozen=True)
 class ReportPost:
     message_id: str
+    channel: str
     posted_at: str
     title: str
     text: str
@@ -250,6 +325,14 @@ class ReportPost:
 def normalize_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text or "").strip()
     return text
+
+
+def save_pdf_bytes(pdf_hash: str, pdf_bytes: bytes) -> Path:
+    PDF_DIR.mkdir(parents=True, exist_ok=True)
+    path = PDF_DIR / f"{pdf_hash}.pdf"
+    if not path.exists():
+        path.write_bytes(pdf_bytes)
+    return path
 
 
 def fetch_channel_posts(
@@ -276,6 +359,265 @@ def should_use_telethon() -> bool:
     return any(os.path.exists(candidate) for candidate in candidates)
 
 
+def get_telegram_session_arg() -> object:
+    from telethon.sessions import StringSession
+
+    session = os.getenv("TELEGRAM_SESSION", "doc_pool.session")
+    string_session = os.getenv("TELEGRAM_STRING_SESSION")
+    return StringSession(string_session) if string_session else session
+
+
+async def collect_saved_messages_with_telethon(limit: int, include_heart_reactions: bool) -> int:
+    from telethon import TelegramClient
+
+    api_id = int(os.environ["TELEGRAM_API_ID"])
+    api_hash = os.environ["TELEGRAM_API_HASH"]
+    channels = SAVED_SOURCE_CHANNELS or WATCH_CHANNELS
+    saved_count = 0
+
+    client = TelegramClient(get_telegram_session_arg(), api_id, api_hash)
+    async with client:
+        if not await client.is_user_authorized():
+            raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
+        for channel in channels:
+            async for message in client.iter_messages(channel, limit=limit):
+                if include_heart_reactions and not message_has_own_heart_reaction(message):
+                    continue
+                saved_count += await persist_message_as_saved_item(client, channel, message)
+    return saved_count
+
+
+def collect_saved_messages(limit: int = 200, include_heart_reactions: bool = True) -> int:
+    if not should_use_telethon():
+        raise RuntimeError("하트/저장 글 수집은 Telegram API 세션이 필요합니다.")
+    return asyncio.run(collect_saved_messages_with_telethon(limit, include_heart_reactions))
+
+
+def collect_sector_posts(
+    sector: str,
+    clip_date: date,
+    limit_per_channel: int = 300,
+) -> list[ReportPost]:
+    if not should_use_telethon():
+        raise RuntimeError("데일리 클리핑은 Telegram API 세션이 필요합니다.")
+    return asyncio.run(collect_sector_posts_with_telethon(sector, clip_date, limit_per_channel))
+
+
+async def collect_sector_posts_with_telethon(
+    sector: str,
+    clip_date: date,
+    limit_per_channel: int,
+) -> list[ReportPost]:
+    from telethon import TelegramClient
+
+    api_id = int(os.environ["TELEGRAM_API_ID"])
+    api_hash = os.environ["TELEGRAM_API_HASH"]
+    kst = ZoneInfo("Asia/Seoul")
+    start_dt = datetime.combine(clip_date, time.min, tzinfo=kst)
+    end_dt = start_dt + timedelta(days=1)
+    keywords = [kw.lower() for kw in DAILY_KEYWORDS[sector]]
+    posts: list[ReportPost] = []
+
+    client = TelegramClient(get_telegram_session_arg(), api_id, api_hash)
+    async with client:
+        if not await client.is_user_authorized():
+            raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
+        for channel in WATCH_CHANNELS:
+            async for message in client.iter_messages(
+                channel,
+                limit=None,
+                offset_date=end_dt.astimezone(timezone.utc),
+            ):
+                message_dt = message.date.astimezone(kst) if message.date else None
+                if message_dt and message_dt < start_dt:
+                    break
+                if message_dt and message_dt >= end_dt:
+                    continue
+                text_parts = [message.message or ""]
+                document_name = get_telethon_document_name(message)
+                if document_name:
+                    text_parts.append(document_name)
+                raw_text = normalize_text(" ".join(text_parts))
+                if not raw_text:
+                    continue
+                lowered = raw_text.lower()
+                if not any(keyword in lowered for keyword in keywords):
+                    continue
+                posts.append(
+                    ReportPost(
+                        message_id=str(message.id),
+                        channel=channel,
+                        posted_at=message.date.isoformat() if message.date else "",
+                        title=extract_title(raw_text),
+                        text=raw_text,
+                        link=f"https://t.me/{channel}/{message.id}",
+                        views=str(message.views or ""),
+                        file_name=document_name,
+                    )
+                )
+                if len([post for post in posts if post.channel == channel]) >= limit_per_channel:
+                    break
+    return dedupe_posts(posts)
+
+
+def dedupe_posts(posts: list[ReportPost]) -> list[ReportPost]:
+    seen: set[str] = set()
+    unique: list[ReportPost] = []
+    for post in posts:
+        key = normalize_text(re.sub(r"https?://\S+", "", post.text))[:240]
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(post)
+    return unique
+
+
+def generate_daily_clipping(sector: str, clip_date: date, max_items: int = 15) -> str:
+    posts = collect_sector_posts(sector, clip_date)
+    if not posts:
+        summary = f"# {clip_date.isoformat()} {sector} 데일리 클리핑\n\n수집된 관련 글이 없습니다."
+        save_daily_clipping(clip_date.isoformat(), sector, f"{clip_date.isoformat()} {sector} 클리핑", summary, 0)
+        return summary
+
+    posts = posts[:max_items]
+    source_block = "\n\n".join(
+        [
+            f"[{idx}] {post.title}\n"
+            f"- 채널: {post.channel}\n"
+            f"- 시간: {format_datetime(post.posted_at)}\n"
+            f"- 링크: {post.link}\n"
+            f"- 본문: {post.text[:1200]}"
+            for idx, post in enumerate(posts, start=1)
+        ]
+    )
+    if os.getenv("OPENAI_API_KEY"):
+        summary = summarize_daily_with_openai(sector, clip_date, source_block, max_items)
+    else:
+        summary = build_heuristic_daily_summary(sector, clip_date, posts)
+    save_daily_clipping(
+        clip_date.isoformat(),
+        sector,
+        f"{clip_date.isoformat()} {sector} 클리핑",
+        summary,
+        len(posts),
+    )
+    return summary
+
+
+def build_heuristic_daily_summary(sector: str, clip_date: date, posts: list[ReportPost]) -> str:
+    lines = [f"# {clip_date.isoformat()} {sector} 데일리 클리핑", ""]
+    lines.append("OPENAI_API_KEY가 없어 원문 기반 목록형 요약만 생성했습니다.")
+    lines.append("")
+    for idx, post in enumerate(posts, start=1):
+        lines.extend(
+            [
+                f"## {idx}. {post.title}",
+                f"- 출처: {post.link}",
+                f"- 시간: {format_datetime(post.posted_at)}",
+                f"- 요약: {heuristic_summary(post.text)}",
+                "- 검증 코멘트: 원문 링크 확인 필요",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str, max_items: int) -> str:
+    from openai import OpenAI
+
+    client = OpenAI()
+    if sector == "반도체":
+        focus = (
+            "AI 데이터센터, 전력/인프라, HBM/메모리, 파운드리, 빅테크 CAPEX, "
+            "네오클라우드, 컨퍼런스콜, 한국 반도체 수출 관련 신호를 우선 정리"
+        )
+    else:
+        focus = (
+            "국내 조선사 공시/수주, 조선 섹터 뉴스, 해외 조선/해운/선가/운임 이슈를 "
+            "10~15개 안팎으로 묶어 정리"
+        )
+    prompt = (
+        f"너는 {sector} 섹터 투자자를 위한 데일리 리서치 애널리스트다.\n"
+        f"날짜: {clip_date.isoformat()}\n"
+        f"중점: {focus}\n\n"
+        "아래 텔레그램 원문 묶음만 근거로 Markdown 데일리 노트를 작성해라. "
+        "확인되지 않은 내용은 단정하지 말고 '확인 필요'로 표시해라. "
+        "중복 이슈는 하나로 묶고, 각 항목에는 출처 번호와 링크를 남겨라. "
+        "각 항목은 '무슨 일', '투자적 의미', '검증/추적 포인트'를 포함해라. "
+        f"중요도 기준으로 최대 {max_items}개만 선별해라.\n\n"
+        "출력 형식:\n"
+        f"# {clip_date.isoformat()} {sector} 데일리 클리핑\n"
+        "## 핵심 요약\n"
+        "## 주요 클리핑\n"
+        "## 오늘의 투자 체크포인트\n"
+        "## 확인 필요\n\n"
+        f"[원문]\n{source_block}"
+    )
+    result = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        input=prompt,
+        max_output_tokens=3500,
+    )
+    return result.output_text.strip()
+
+
+def message_has_own_heart_reaction(message: object) -> bool:
+    reactions = getattr(message, "reactions", None)
+    for result in getattr(reactions, "results", []) or []:
+        reaction = getattr(result, "reaction", None)
+        emoticon = getattr(reaction, "emoticon", "")
+        chosen_order = getattr(result, "chosen_order", None)
+        if emoticon in HEART_REACTIONS and chosen_order is not None:
+            return True
+    return False
+
+
+async def persist_message_as_saved_item(client: object, channel: str, message: object) -> int:
+    text_parts = [message.message or ""]
+    document_name = get_telethon_document_name(message)
+    if document_name:
+        text_parts.append(document_name)
+    raw_text = normalize_text(" ".join(text_parts))
+    if not raw_text and not document_name:
+        return 0
+
+    message_id = str(message.id)
+    link = f"https://t.me/{channel}/{message_id}"
+    pdf_hash = ""
+    if document_name.lower().endswith(".pdf"):
+        try:
+            pdf_bytes = await client.download_media(message, file=bytes)
+            if pdf_bytes:
+                pdf_hash = hash_pdf_bytes(pdf_bytes)
+                save_pdf_bytes(pdf_hash, pdf_bytes)
+                register_pdf(
+                    pdf_hash=pdf_hash,
+                    message_id=message_id,
+                    file_name=document_name,
+                    file_size=len(pdf_bytes),
+                    telegram_link=link,
+                )
+                stored = get_stored_report(pdf_hash)
+                if not stored or not stored.extracted_text:
+                    extracted_text = extract_pdf_text(pdf_bytes)
+                    if extracted_text:
+                        save_extracted_text(pdf_hash, extracted_text)
+        except Exception:
+            pdf_hash = ""
+
+    save_saved_item(
+        message_id=message_id,
+        channel=channel,
+        posted_at=message.date.isoformat() if message.date else "",
+        title=extract_title(raw_text),
+        text=raw_text,
+        telegram_link=link,
+        file_name=document_name,
+        pdf_hash=pdf_hash,
+    )
+    return 1
+
+
 async def fetch_channel_posts_with_telethon(
     limit: int,
     classify_pdfs: bool,
@@ -283,13 +625,9 @@ async def fetch_channel_posts_with_telethon(
     end_date_text: str = "",
 ) -> list[ReportPost]:
     from telethon import TelegramClient
-    from telethon.sessions import StringSession
 
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
-    session = os.getenv("TELEGRAM_SESSION", "doc_pool.session")
-    string_session = os.getenv("TELEGRAM_STRING_SESSION")
-    session_arg = StringSession(string_session) if string_session else session
     posts: list[ReportPost] = []
     start_day = parse_date_text(start_date_text)
     end_day = parse_date_text(end_date_text)
@@ -299,7 +637,7 @@ async def fetch_channel_posts_with_telethon(
         end_exclusive = datetime.combine(end_day + timedelta(days=1), time.min, tzinfo=kst)
         offset_date = end_exclusive.astimezone(timezone.utc)
 
-    client = TelegramClient(session_arg, api_id, api_hash)
+    client = TelegramClient(get_telegram_session_arg(), api_id, api_hash)
     async with client:
         if not await client.is_user_authorized():
             raise RuntimeError(
@@ -340,6 +678,7 @@ async def fetch_channel_posts_with_telethon(
                         processing_note = "PDF 다운로드 실패"
                     else:
                         pdf_hash = hash_pdf_bytes(pdf_bytes)
+                        save_pdf_bytes(pdf_hash, pdf_bytes)
                         duplicate_pdf = not register_pdf(
                             pdf_hash=pdf_hash,
                             message_id=message_id,
@@ -387,6 +726,7 @@ async def fetch_channel_posts_with_telethon(
             posts.append(
                 ReportPost(
                     message_id=message_id,
+                    channel=CHANNEL,
                     posted_at=message.date.isoformat() if message.date else "",
                     title=extract_title(raw_text),
                     text=raw_text,
@@ -583,6 +923,7 @@ def fetch_channel_posts_from_preview(limit: int) -> list[ReportPost]:
         posts.append(
             ReportPost(
                 message_id=message_id,
+                channel=CHANNEL,
                 posted_at=posted_at,
                 title=title,
                 text=raw_text,
@@ -991,13 +1332,98 @@ def value_label(value: str) -> str:
     )
 
 
-def main() -> None:
-    st.set_page_config(page_title="증권사 리포트 가치 매기기", page_icon="📄", layout="wide")
-    st.title("증권사 리포트 가치 매기기")
+def render_saved_library() -> None:
+    st.subheader("하트/저장 글 보관함")
+    st.caption(
+        "하트 반응 수집은 Telegram API에서 내 반응 정보가 보일 때만 동작합니다. "
+        "안정적으로 쓰려면 저장용 채널 또는 Saved Messages에 글을 전달하고 SAVED_SOURCE_CHANNELS에 지정하세요."
+    )
+    cols = st.columns([1, 1, 2])
+    limit = cols[0].number_input("확인할 글 수", min_value=10, max_value=2000, value=200, step=10)
+    source_mode = cols[1].selectbox("수집 방식", ["하트 반응만", "저장용 채널 전체"])
+    if cols[2].button("보관함 수집/갱신", type="primary"):
+        with st.spinner("Telegram에서 저장할 글을 찾는 중..."):
+            count = collect_saved_messages(
+                limit=int(limit),
+                include_heart_reactions=(source_mode == "하트 반응만"),
+            )
+        st.success(f"{count}개 글을 보관함에 저장/갱신했습니다.")
+
+    saved_items = list_saved_items()
+    if not saved_items:
+        st.info("아직 저장된 글이 없습니다.")
+        return
+
+    rows = [
+        {
+            "저장시각": item.saved_at,
+            "게시시각": format_datetime(item.posted_at),
+            "채널": item.channel,
+            "제목": item.title,
+            "파일명": item.file_name,
+            "PDF": "Y" if item.pdf_hash else "",
+            "링크": item.telegram_link,
+            "본문": item.text,
+            "PDF 해시": item.pdf_hash,
+        }
+        for item in saved_items
+    ]
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df.drop(columns=["본문", "PDF 해시"]),
+        use_container_width=True,
+        hide_index=True,
+        column_config={"링크": st.column_config.LinkColumn("링크")},
+    )
+    for _, row in df.head(30).iterrows():
+        with st.expander(f"{row['게시시각']} | {row['제목']}"):
+            st.write(row["본문"])
+            if row["PDF 해시"]:
+                st.caption(f"PDF 해시: {row['PDF 해시']}")
+
+
+def render_daily_clipping() -> None:
+    st.subheader("섹터 데일리 클리핑")
+    st.caption(
+        "매일 08:30 자동 실행은 GitHub Actions/Windows 작업 스케줄러 같은 별도 스케줄러에 연결하는 구조가 좋습니다. "
+        "여기서는 같은 로직을 수동 생성하고 누적 조회합니다."
+    )
+    cols = st.columns([1, 1, 1, 1])
+    sector = cols[0].selectbox("섹터", ["반도체", "조선"])
+    clip_day = cols[1].date_input("클리핑 날짜", value=datetime.now(ZoneInfo("Asia/Seoul")).date())
+    max_items = cols[2].number_input("최대 항목 수", min_value=5, max_value=30, value=15, step=1)
+    if cols[3].button("데일리 생성/갱신", type="primary"):
+        with st.spinner(f"{sector} 데일리 클리핑을 생성하는 중..."):
+            summary = generate_daily_clipping(sector, clip_day, int(max_items))
+        st.success("데일리 클리핑을 저장했습니다.")
+        st.markdown(summary)
+
+    st.divider()
+    selected_history_sector = st.selectbox("누적 조회 섹터", ["전체", "반도체", "조선"])
+    history = list_daily_clippings(None if selected_history_sector == "전체" else selected_history_sector)
+    if not history:
+        st.info("아직 누적된 데일리 클리핑이 없습니다.")
+        return
+    for clip in history:
+        with st.expander(f"{clip.clip_date} | {clip.sector} | 소스 {clip.source_count}개"):
+            st.markdown(clip.summary_md)
+            render_clipboard_button(clip.summary_md, safe_file_name(f"{clip.clip_date}-{clip.sector}"))
+            st.download_button(
+                "Markdown 파일로 받기",
+                data=clip.summary_md,
+                file_name=f"{clip.clip_date}_{clip.sector}_daily.md",
+                mime="text/markdown",
+                key=f"daily-download-{clip.clip_date}-{clip.sector}",
+            )
+
+
+def render_report_classifier() -> None:
+    st.subheader("DOC_POOL 리포트 분류")
     st.caption("텔레그램 공개 채널 게시글을 섹터별로 분류하고 읽어볼 우선순위와 요약을 보여줍니다.")
 
     with st.sidebar:
-        st.header("수집 설정")
+        st.divider()
+        st.header("리포트 분류 설정")
         st.caption("채널에 올라온 최신 글 기준으로 수집")
         st.caption(
             "상세분석 후보: "
@@ -1015,8 +1441,8 @@ def main() -> None:
         if use_date_range:
             today = datetime.now(ZoneInfo("Asia/Seoul")).date()
             date_cols = st.columns(2)
-            start_day = date_cols[0].date_input("시작일", value=today - timedelta(days=7))
-            end_day = date_cols[1].date_input("종료일", value=today)
+            start_day = date_cols[0].date_input("시작일", value=today - timedelta(days=7), key="report-start")
+            end_day = date_cols[1].date_input("종료일", value=today, key="report-end")
             start_date_text = start_day.isoformat()
             end_date_text = end_day.isoformat()
             if start_day > end_day:
@@ -1110,6 +1536,22 @@ def main() -> None:
         )
         st.dataframe(stats, use_container_width=True, hide_index=True)
         st.bar_chart(df["섹터"].value_counts())
+
+
+def main() -> None:
+    st.set_page_config(page_title="증권사 리포트 가치 매기기", page_icon="📄", layout="wide")
+    st.title("증권사 리포트 가치 매기기")
+    st.caption("저장한 리포트와 섹터별 데일리 클리핑을 누적 관리합니다.")
+
+    with st.sidebar:
+        page = st.radio("화면", ["저장함", "데일리 클리핑", "DOC_POOL 분류"], index=0)
+
+    if page == "저장함":
+        render_saved_library()
+    elif page == "데일리 클리핑":
+        render_daily_clipping()
+    else:
+        render_report_classifier()
 
 
 @st.cache_data(ttl=300, show_spinner="텔레그램 채널을 읽는 중...")

@@ -2,6 +2,12 @@
 
 텔레그램 공개 채널 `https://t.me/DOC_POOL`에 올라오는 증권사 리포트 게시글을 읽어 섹터별로 분류하고, 읽어볼 가치와 짧은 요약을 보여주는 Streamlit 앱입니다.
 
+## 주요 기능
+
+- `저장함`: 내가 하트 표시한 글 또는 저장용 채널로 전달한 글을 PDF와 함께 보관합니다.
+- `데일리 클리핑`: 반도체/조선 섹터 관련 텔레그램 글을 날짜별로 모아 GPT 코멘트가 포함된 Markdown 데일리 노트로 누적 저장합니다.
+- `DOC_POOL 분류`: 기존 DOC_POOL 리포트 PDF를 Gemini로 분류하고 원하는 리포트만 GPT 상세분석합니다.
+
 ## 실행
 
 ```powershell
@@ -27,7 +33,11 @@ python make_telegram_session.py
   - `TELEGRAM_API_HASH`
   - `TELEGRAM_SESSION` 선택값, 기본값은 `doc_pool.session`
   - `TELEGRAM_STRING_SESSION` 선택값, Streamlit Cloud 같은 배포 환경에서 파일 세션 대신 사용
+- `WATCH_CHANNELS`에는 데일리 클리핑을 감시할 텔레그램 채널을 쉼표로 지정합니다. 예: `DOC_POOL,다른채널명`
+- `SAVED_SOURCE_CHANNELS`를 지정하면 저장함은 해당 채널의 글을 저장합니다. 비워두면 `WATCH_CHANNELS`에서 하트 반응을 찾습니다.
+- 하트 반응 수집은 Telegram API가 내 반응 정보를 노출하는 경우에만 안정적으로 동작합니다. 가장 확실한 방식은 읽고 싶은 글을 별도 저장용 채널이나 Saved Messages에 전달하고 `SAVED_SOURCE_CHANNELS`에 그 채널을 지정하는 것입니다.
 - Telegram API 설정이 있고 앱에서 `Gemini PDF 분류 실행`을 켜면 PDF를 다운로드해 본문을 추출하고 Gemini로 요니쿠니봇식 7개 항목 축약 분석을 수행합니다.
+- 다운로드한 PDF 파일은 `data/pdfs/{pdf_hash}.pdf`에 저장되고, 메타/분석 결과는 `data/reports.sqlite3`에 저장됩니다.
 - 사이드바의 `기간 지정`을 켜면 지정한 시작일~종료일 범위의 채널 글을 수집할 수 있습니다. Telegram API 모드에서는 해당 기간을 직접 훑고, 공개 미리보기 모드에서는 가져온 최신 글 안에서만 필터링됩니다.
 - Streamlit 앱 안에서는 Telegram 전화번호 인증을 받지 않습니다. `make_telegram_session.py`로 세션을 먼저 만든 뒤 앱을 실행하세요.
 - 동일 PDF는 SHA-256 해시로 중복 체크합니다. 한 번 분류된 PDF는 다시 올라와도 기존 결과를 재사용합니다.
@@ -45,6 +55,9 @@ python make_telegram_session.py
 ```powershell
 TELEGRAM_API_ID=123456
 TELEGRAM_API_HASH=...
+WATCH_CHANNELS=DOC_POOL
+SAVED_SOURCE_CHANNELS=
+HEART_REACTIONS=❤️,❤,♥️,♥
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-3.1-flash-lite
 OPENAI_API_KEY=...
@@ -56,6 +69,16 @@ DETAIL_TARGET_SECTORS=
 `GEMINI_MODEL`과 `OPENAI_MODEL`은 필요에 따라 바꿀 수 있습니다.
 
 앱의 `가져올 최신 게시글 수`는 텔레그램 채널에 올라온 최신 게시글 N개를 의미합니다. 텔레그램 앱에 표시되는 읽지 않은 글 수와는 무관합니다.
+
+## 매일 08:30 자동 실행
+
+Streamlit 앱 자체는 사용자가 열 때 실행되는 웹앱이므로, 매일 08:30 자동 수집은 별도 스케줄러에서 `run_daily_clipping.py`를 호출하는 방식이 안정적입니다.
+
+```powershell
+python run_daily_clipping.py --sectors 반도체,조선 --max-items 15
+```
+
+GitHub Actions, Windows 작업 스케줄러, 개인 서버 cron 등에 위 명령을 매일 08:30 KST로 등록하면 `data/reports.sqlite3`에 날짜별 데일리 클리핑이 누적 저장됩니다.
 
 상세분석 후보 조건은 다음 환경변수로 조정합니다.
 

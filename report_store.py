@@ -32,6 +32,29 @@ class StoredReport:
     extracted_text: str
 
 
+@dataclass(frozen=True)
+class SavedItem:
+    message_id: str
+    channel: str
+    saved_at: str
+    posted_at: str
+    title: str
+    text: str
+    telegram_link: str
+    file_name: str
+    pdf_hash: str
+
+
+@dataclass(frozen=True)
+class DailyClipping:
+    clip_date: str
+    sector: str
+    title: str
+    summary_md: str
+    source_count: int
+    created_at: str
+
+
 def ensure_db(path: Path = DB_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
@@ -87,6 +110,35 @@ def ensure_db(path: Path = DB_PATH) -> None:
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(pdf_hash, model),
                 FOREIGN KEY(pdf_hash) REFERENCES pdf_reports(pdf_hash)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS saved_items (
+                message_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                saved_at TEXT NOT NULL,
+                posted_at TEXT,
+                title TEXT,
+                text TEXT,
+                telegram_link TEXT,
+                file_name TEXT,
+                pdf_hash TEXT,
+                PRIMARY KEY(message_id, channel)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS daily_clippings (
+                clip_date TEXT NOT NULL,
+                sector TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary_md TEXT NOT NULL,
+                source_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(clip_date, sector)
             )
             """
         )
@@ -254,3 +306,78 @@ def save_detailed_analysis(
             """,
             (pdf_hash, model, analysis_text, now),
         )
+
+
+def save_saved_item(
+    message_id: str,
+    channel: str,
+    posted_at: str,
+    title: str,
+    text: str,
+    telegram_link: str,
+    file_name: str = "",
+    pdf_hash: str = "",
+    path: Path = DB_PATH,
+) -> None:
+    ensure_db(path)
+    now = datetime.now().isoformat(timespec="seconds")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO saved_items
+            (message_id, channel, saved_at, posted_at, title, text, telegram_link, file_name, pdf_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (message_id, channel, now, posted_at, title, text, telegram_link, file_name, pdf_hash),
+        )
+
+
+def list_saved_items(path: Path = DB_PATH) -> list[SavedItem]:
+    ensure_db(path)
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT message_id, channel, saved_at, posted_at, title, text,
+                   telegram_link, file_name, COALESCE(pdf_hash, '')
+            FROM saved_items
+            ORDER BY COALESCE(posted_at, saved_at) DESC
+            """
+        ).fetchall()
+    return [SavedItem(*row) for row in rows]
+
+
+def save_daily_clipping(
+    clip_date: str,
+    sector: str,
+    title: str,
+    summary_md: str,
+    source_count: int,
+    path: Path = DB_PATH,
+) -> None:
+    ensure_db(path)
+    now = datetime.now().isoformat(timespec="seconds")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO daily_clippings
+            (clip_date, sector, title, summary_md, source_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (clip_date, sector, title, summary_md, source_count, now),
+        )
+
+
+def list_daily_clippings(sector: str | None = None, path: Path = DB_PATH) -> list[DailyClipping]:
+    ensure_db(path)
+    query = """
+        SELECT clip_date, sector, title, summary_md, source_count, created_at
+        FROM daily_clippings
+    """
+    params: tuple[Any, ...] = ()
+    if sector:
+        query += " WHERE sector = ?"
+        params = (sector,)
+    query += " ORDER BY clip_date DESC, sector"
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [DailyClipping(*row) for row in rows]
