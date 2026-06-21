@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from email.utils import parsedate_to_datetime
 import html
 import json
 import os
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -52,6 +54,24 @@ TELEGRAM_PREVIEW_URL = f"https://t.me/s/{CHANNEL}"
 WATCH_CHANNELS = [
     item.strip().lstrip("@")
     for item in os.getenv("WATCH_CHANNELS", CHANNEL).split(",")
+    if item.strip()
+]
+SEMICON_CHANNELS = [
+    item.strip().lstrip("@")
+    for item in os.getenv("SEMICON_CHANNELS", "").split(",")
+    if item.strip()
+]
+SHIPBUILDING_CHANNELS = [
+    item.strip().lstrip("@")
+    for item in os.getenv("SHIPBUILDING_CHANNELS", "").split(",")
+    if item.strip()
+]
+SHIPBUILDING_NEWS_QUERIES = [
+    item.strip()
+    for item in os.getenv(
+        "SHIPBUILDING_NEWS_QUERIES",
+        "조선 수주 LNG선 신조선가,HD한국조선해양 삼성중공업 한화오션 수주,해운 운임 선박 발주 조선",
+    ).split(",")
     if item.strip()
 ]
 SAVED_SOURCE_CHANNELS = [
@@ -403,15 +423,32 @@ def collect_sector_posts(
     clip_date: date,
     limit_per_channel: int = 300,
 ) -> list[ReportPost]:
-    if not should_use_telethon():
-        raise RuntimeError("데일리 클리핑은 Telegram API 세션이 필요합니다.")
-    return asyncio.run(collect_sector_posts_with_telethon(sector, clip_date, limit_per_channel))
+    posts: list[ReportPost] = []
+    channels = channels_for_sector(sector)
+    if should_use_telethon() and channels:
+        posts.extend(asyncio.run(collect_sector_posts_with_telethon(sector, clip_date, limit_per_channel, channels)))
+    elif sector == "반도체":
+        raise RuntimeError("반도체 데일리 클리핑은 SEMICON_CHANNELS 또는 WATCH_CHANNELS와 Telegram API 세션이 필요합니다.")
+
+    if sector == "조선":
+        posts.extend(fetch_shipbuilding_news_posts(clip_date))
+
+    return dedupe_posts(posts)
+
+
+def channels_for_sector(sector: str) -> list[str]:
+    if sector == "반도체":
+        return SEMICON_CHANNELS or WATCH_CHANNELS
+    if sector == "조선":
+        return SHIPBUILDING_CHANNELS
+    return WATCH_CHANNELS
 
 
 async def collect_sector_posts_with_telethon(
     sector: str,
     clip_date: date,
     limit_per_channel: int,
+    channels: list[str],
 ) -> list[ReportPost]:
     from telethon import TelegramClient
 
@@ -427,7 +464,7 @@ async def collect_sector_posts_with_telethon(
     async with client:
         if not await client.is_user_authorized():
             raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
-        for channel in WATCH_CHANNELS:
+        for channel in channels:
             try:
                 async for message in client.iter_messages(
                     channel,
@@ -466,7 +503,51 @@ async def collect_sector_posts_with_telethon(
             except Exception as exc:
                 st.warning(f"텔레그램 채널을 건너뜁니다: @{channel} ({exc})")
                 continue
-    return dedupe_posts(posts)
+    return posts
+
+
+def fetch_shipbuilding_news_posts(clip_date: date) -> list[ReportPost]:
+    posts: list[ReportPost] = []
+    kst = ZoneInfo("Asia/Seoul")
+    for query in SHIPBUILDING_NEWS_QUERIES:
+        url = (
+            "https://news.google.com/rss/search?"
+            f"q={requests.utils.quote(query)}%20when:2d&hl=ko&gl=KR&ceid=KR:ko"
+        )
+        try:
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        except Exception as exc:
+            st.warning(f"조선 뉴스 RSS를 건너뜁니다: {query} ({exc})")
+            continue
+
+        for item in root.findall(".//item"):
+            title = normalize_text(item.findtext("title") or "")
+            link = normalize_text(item.findtext("link") or "")
+            pub_date = item.findtext("pubDate") or ""
+            description = normalize_text(re.sub(r"<[^>]+>", " ", item.findtext("description") or ""))
+            try:
+                published = parsedate_to_datetime(pub_date).astimezone(kst)
+            except Exception:
+                published = datetime.combine(clip_date, time.min, tzinfo=kst)
+            if published.date() != clip_date:
+                continue
+            text = normalize_text(f"{title} {description}")
+            if not text:
+                continue
+            posts.append(
+                ReportPost(
+                    message_id=f"news-{abs(hash(link or title))}",
+                    channel=f"뉴스:{query}",
+                    posted_at=published.isoformat(),
+                    title=title,
+                    text=text,
+                    link=link,
+                    views="",
+                )
+            )
+    return posts
 
 
 def dedupe_posts(posts: list[ReportPost]) -> list[ReportPost]:
@@ -565,7 +646,7 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
         f"너는 {sector} 섹터 투자자를 위한 데일리 리서치 애널리스트다.\n"
         f"날짜: {clip_date.isoformat()}\n"
         f"중점: {focus}\n\n"
-        "아래 텔레그램 원문 묶음만 근거로 Markdown 데일리 노트를 작성해라. "
+        "아래 수집 원문 묶음(텔레그램/뉴스 RSS)만 근거로 Markdown 데일리 노트를 작성해라. "
         f"{company_rule}"
         "확인되지 않은 내용은 단정하지 말고 '확인 필요'로 표시해라. "
         "중복 이슈는 하나로 묶고, 각 항목에는 출처 번호와 링크를 남겨라. "
@@ -1450,7 +1531,14 @@ def render_daily_clipping() -> None:
         "매일 08:30 자동 실행은 GitHub Actions/Windows 작업 스케줄러 같은 별도 스케줄러에 연결하는 구조가 좋습니다. "
         "여기서는 같은 로직을 수동 생성하고 누적 조회합니다."
     )
-    st.caption(f"현재 감시 채널: {', '.join('@' + channel for channel in WATCH_CHANNELS)}")
+    semicon_channels = SEMICON_CHANNELS or WATCH_CHANNELS
+    ship_channels = SHIPBUILDING_CHANNELS
+    st.caption(f"반도체 텔레그램 소스: {', '.join('@' + channel for channel in semicon_channels)}")
+    st.caption(
+        "조선 소스: "
+        + (", ".join('@' + channel for channel in ship_channels) + " + " if ship_channels else "")
+        + "업계 뉴스 RSS"
+    )
     cols = st.columns([1, 1, 1, 1])
     sector = cols[0].selectbox("섹터", ["반도체", "조선"])
     clip_day = cols[1].date_input("클리핑 날짜", value=datetime.now(ZoneInfo("Asia/Seoul")).date())
