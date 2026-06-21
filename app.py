@@ -305,6 +305,10 @@ DAILY_KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
+COMPANY_NAME_REPLACEMENTS = {
+    "대우조선해양": "한화오션(구 대우조선해양)",
+}
+
 
 @dataclass(frozen=True)
 class ReportPost:
@@ -424,40 +428,44 @@ async def collect_sector_posts_with_telethon(
         if not await client.is_user_authorized():
             raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
         for channel in WATCH_CHANNELS:
-            async for message in client.iter_messages(
-                channel,
-                limit=None,
-                offset_date=end_dt.astimezone(timezone.utc),
-            ):
-                message_dt = message.date.astimezone(kst) if message.date else None
-                if message_dt and message_dt < start_dt:
-                    break
-                if message_dt and message_dt >= end_dt:
-                    continue
-                text_parts = [message.message or ""]
-                document_name = get_telethon_document_name(message)
-                if document_name:
-                    text_parts.append(document_name)
-                raw_text = normalize_text(" ".join(text_parts))
-                if not raw_text:
-                    continue
-                lowered = raw_text.lower()
-                if not any(keyword in lowered for keyword in keywords):
-                    continue
-                posts.append(
-                    ReportPost(
-                        message_id=str(message.id),
-                        channel=channel,
-                        posted_at=message.date.isoformat() if message.date else "",
-                        title=extract_title(raw_text),
-                        text=raw_text,
-                        link=f"https://t.me/{channel}/{message.id}",
-                        views=str(message.views or ""),
-                        file_name=document_name,
+            try:
+                async for message in client.iter_messages(
+                    channel,
+                    limit=None,
+                    offset_date=end_dt.astimezone(timezone.utc),
+                ):
+                    message_dt = message.date.astimezone(kst) if message.date else None
+                    if message_dt and message_dt < start_dt:
+                        break
+                    if message_dt and message_dt >= end_dt:
+                        continue
+                    text_parts = [message.message or ""]
+                    document_name = get_telethon_document_name(message)
+                    if document_name:
+                        text_parts.append(document_name)
+                    raw_text = normalize_text(" ".join(text_parts))
+                    if not raw_text:
+                        continue
+                    lowered = raw_text.lower()
+                    if not any(keyword in lowered for keyword in keywords):
+                        continue
+                    posts.append(
+                        ReportPost(
+                            message_id=str(message.id),
+                            channel=channel,
+                            posted_at=message.date.isoformat() if message.date else "",
+                            title=extract_title(raw_text),
+                            text=raw_text,
+                            link=f"https://t.me/{channel}/{message.id}",
+                            views=str(message.views or ""),
+                            file_name=document_name,
+                        )
                     )
-                )
-                if len([post for post in posts if post.channel == channel]) >= limit_per_channel:
-                    break
+                    if len([post for post in posts if post.channel == channel]) >= limit_per_channel:
+                        break
+            except Exception as exc:
+                st.warning(f"텔레그램 채널을 건너뜁니다: @{channel} ({exc})")
+                continue
     return dedupe_posts(posts)
 
 
@@ -495,6 +503,7 @@ def generate_daily_clipping(sector: str, clip_date: date, max_items: int = 15) -
         summary = summarize_daily_with_openai(sector, clip_date, source_block, max_items)
     else:
         summary = build_heuristic_daily_summary(sector, clip_date, posts)
+    summary = normalize_company_names(summary)
     save_daily_clipping(
         clip_date.isoformat(),
         sector,
@@ -503,6 +512,13 @@ def generate_daily_clipping(sector: str, clip_date: date, max_items: int = 15) -
         len(posts),
     )
     return summary
+
+
+def normalize_company_names(text: str) -> str:
+    normalized = text
+    for old_name, new_name in COMPANY_NAME_REPLACEMENTS.items():
+        normalized = normalized.replace(old_name, new_name)
+    return normalized
 
 
 def build_heuristic_daily_summary(sector: str, clip_date: date, posts: list[ReportPost]) -> str:
@@ -537,11 +553,20 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
             "국내 조선사 공시/수주, 조선 섹터 뉴스, 해외 조선/해운/선가/운임 이슈를 "
             "10~15개 안팎으로 묶어 정리"
         )
+    company_rule = ""
+    if sector == "조선":
+        company_rule = (
+            "회사명 검증 규칙: 현재 존재하는 사명 기준으로 써라. "
+            "대우조선해양이라는 현재 사명은 사용하지 말고, 과거 사명 맥락이 필요할 때만 "
+            "'한화오션(구 대우조선해양)'이라고 써라. "
+            "국내 주요 조선사는 HD한국조선해양/HD현대중공업/현대미포조선/삼성중공업/한화오션 등을 기준으로 확인해라.\n"
+        )
     prompt = (
         f"너는 {sector} 섹터 투자자를 위한 데일리 리서치 애널리스트다.\n"
         f"날짜: {clip_date.isoformat()}\n"
         f"중점: {focus}\n\n"
         "아래 텔레그램 원문 묶음만 근거로 Markdown 데일리 노트를 작성해라. "
+        f"{company_rule}"
         "확인되지 않은 내용은 단정하지 말고 '확인 필요'로 표시해라. "
         "중복 이슈는 하나로 묶고, 각 항목에는 출처 번호와 링크를 남겨라. "
         "각 항목은 '무슨 일', '투자적 의미', '검증/추적 포인트'를 포함해라. "
@@ -1425,6 +1450,7 @@ def render_daily_clipping() -> None:
         "매일 08:30 자동 실행은 GitHub Actions/Windows 작업 스케줄러 같은 별도 스케줄러에 연결하는 구조가 좋습니다. "
         "여기서는 같은 로직을 수동 생성하고 누적 조회합니다."
     )
+    st.caption(f"현재 감시 채널: {', '.join('@' + channel for channel in WATCH_CHANNELS)}")
     cols = st.columns([1, 1, 1, 1])
     sector = cols[0].selectbox("섹터", ["반도체", "조선"])
     clip_day = cols[1].date_input("클리핑 날짜", value=datetime.now(ZoneInfo("Asia/Seoul")).date())
