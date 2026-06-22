@@ -33,7 +33,7 @@ python make_telegram_session.py
   - `TELEGRAM_STRING_SESSION` 선택값, Streamlit Cloud 같은 배포 환경에서 파일 세션 대신 사용
 - `SEMICON_CHANNELS`에는 반도체 클리핑에 사용할 텔레그램 채널을 쉼표로 지정합니다. 예: `lupang_channel,kaie_channel`
 - `SHIPBUILDING_CHANNELS`에는 조선 클리핑에 추가로 볼 텔레그램 채널을 지정합니다. 비워두면 조선은 업계 뉴스 RSS 중심으로 수집합니다.
-- `SHIPBUILDING_NEWS_QUERIES`에는 조선 업계 뉴스 검색어를 쉼표로 지정합니다.
+- `SHIPBUILDING_NEWS_QUERIES`에는 조선 업계 뉴스 검색어를 쉼표로 지정합니다. LNG 프로젝트뿐 아니라 가스선, 탱커, 컨테이너선, 벌크선, 특수선, 지정학, 에너지 안보, 운임/선가 이슈를 함께 넣는 것이 좋습니다.
 - `WATCH_CHANNELS`는 저장함/기본 fallback 채널입니다.
 - `SAVED_SOURCE_CHANNELS`를 지정하면 저장함은 해당 채널의 글을 저장합니다. 비워두면 `WATCH_CHANNELS`에서 하트 반응을 찾습니다.
 - 하트 반응 수집은 Telegram API가 내 반응 정보를 노출하는 경우에만 안정적으로 동작합니다. 가장 확실한 방식은 읽고 싶은 글을 별도 저장용 채널이나 Saved Messages에 전달하고 `SAVED_SOURCE_CHANNELS`에 그 채널을 지정하는 것입니다.
@@ -50,7 +50,7 @@ TELEGRAM_API_HASH=...
 WATCH_CHANNELS=DOC_POOL
 SEMICON_CHANNELS=
 SHIPBUILDING_CHANNELS=
-SHIPBUILDING_NEWS_QUERIES=조선 수주 LNG선 신조선가,HD한국조선해양 삼성중공업 한화오션 수주,해운 운임 선박 발주 조선
+SHIPBUILDING_NEWS_QUERIES=LNG carrier order Korea shipyard,LPG carrier VLGC order,VLAC ammonia carrier order,tanker newbuilding order,container ship newbuilding order,bulk carrier order,offshore wind vessel order,FSRU FLNG FPSO order,Clarksons newbuilding price,shipping rates vessel order,geopolitical shipping route tanker LNG carrier,energy security LNG shipping,HD한국조선해양 수주,삼성중공업 수주,한화오션 수주,현대미포조선 수주,LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선
 SAVED_SOURCE_CHANNELS=
 HEART_REACTIONS=❤️,❤,♥️,♥
 GEMINI_API_KEY=...
@@ -72,7 +72,7 @@ python run_daily_clipping.py --sectors 반도체,조선 --max-items 15
 
 GitHub Actions, Windows 작업 스케줄러, 개인 서버 cron 등에 위 명령을 매일 08:30 KST로 등록하면 `data/reports.sqlite3`에 날짜별 데일리 클리핑이 누적 저장됩니다.
 
-GitHub Actions를 사용할 때는 `SEMICON_CHANNELS`에 루팡/카이에 채널의 실제 텔레그램 username을 넣고, 조선은 `SHIPBUILDING_NEWS_QUERIES` 검색어를 통해 업계 뉴스를 수집합니다.
+GitHub Actions를 사용할 때는 `SEMICON_CHANNELS`에 루팡/카이에 채널의 실제 텔레그램 username을 넣고, 조선은 `SHIPBUILDING_NEWS_QUERIES` 검색어를 통해 선종별 발주 신호와 업계 뉴스를 수집합니다.
 
 ## 다음 단계로 개선할 수 있는 부분
 

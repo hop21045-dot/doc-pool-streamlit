@@ -70,7 +70,15 @@ SHIPBUILDING_NEWS_QUERIES = [
     item.strip()
     for item in os.getenv(
         "SHIPBUILDING_NEWS_QUERIES",
-        "조선 수주 LNG선 신조선가,HD한국조선해양 삼성중공업 한화오션 수주,해운 운임 선박 발주 조선",
+        (
+            "LNG carrier order Korea shipyard,LPG carrier VLGC order,VLAC ammonia carrier order,"
+            "tanker newbuilding order,container ship newbuilding order,bulk carrier order,"
+            "offshore wind vessel order,FSRU FLNG FPSO order,Clarksons newbuilding price,"
+            "shipping rates vessel order,geopolitical shipping route tanker LNG carrier,"
+            "energy security LNG shipping,HD한국조선해양 수주,삼성중공업 수주,한화오션 수주,"
+            "현대미포조선 수주,LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,"
+            "홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선"
+        ),
     ).split(",")
     if item.strip()
 ]
@@ -307,15 +315,37 @@ DAILY_KEYWORDS: dict[str, list[str]] = {
         "수주",
         "lng선",
         "lng",
+        "가스선",
+        "lpg",
+        "vlgc",
+        "vlac",
+        "암모니아",
+        "메탄올",
         "탱커",
+        "tanker",
         "컨테이너선",
+        "container",
         "벌크선",
+        "bulk",
+        "특수선",
+        "fsru",
+        "flng",
+        "fpso",
+        "해상풍력",
+        "offshore",
         "해양플랜트",
         "해운",
         "운임",
+        "발주",
+        "선가",
         "신조선가",
         "클락슨",
         "Clarksons",
+        "홍해",
+        "수에즈",
+        "파나마",
+        "지정학",
+        "에너지 안보",
         "HD현대중공업",
         "HD한국조선해양",
         "삼성중공업",
@@ -643,8 +673,9 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
         )
     else:
         focus = (
-            "국내 조선사 공시/수주, 조선 섹터 뉴스, 해외 조선/해운/선가/운임 이슈를 "
-            "10~15개 안팎으로 묶어 정리"
+            "가스선(LNGC/LPGC/VLGC/VLAC), 탱커, 컨테이너선, 벌크선, 특수선(FSRU/FLNG/FPSO/해상풍력), "
+            "국내 조선사 수주/수주 전 신호, 신조선가, 슬롯, 운임, 지정학적 항로 차질, 에너지 안보 이슈가 "
+            "어떤 선종 발주 수요로 이어지는지 10~15개 안팎으로 정리"
         )
     company_rule = ""
     if sector == "조선":
@@ -653,6 +684,12 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
             "대우조선해양이라는 현재 사명은 사용하지 말고, 과거 사명 맥락이 필요할 때만 "
             "'한화오션(구 대우조선해양)'이라고 써라. "
             "국내 주요 조선사는 HD한국조선해양/HD현대중공업/현대미포조선/삼성중공업/한화오션 등을 기준으로 확인해라.\n"
+            "조선 분석 규칙: 단순 수주 기사 요약에 그치지 말고, 각 이슈가 어느 선종의 발주 수요로 이어지는지 분류해라. "
+            "선종 범주는 LNGC/LPGC·VLGC/VLAC·암모니아/메탄올 운반선/탱커/컨테이너선/벌크선/특수선(FSRU·FLNG·FPSO·해상풍력)/방산·군함으로 나눈다. "
+            "지정학 이슈(홍해, 수에즈, 파나마 운하, 러시아/중동, 에너지 안보)는 운항거리, 선복 부족, 운임, 교체 발주, 에너지 운송 수요로 연결되는지 평가해라. "
+            "에너지 이슈(LNG 프로젝트, LPG/암모니아/메탄올, 원유/제품선 수요)는 선종별 발주 가능성과 한국 조선소 수혜 후보로 연결해라. "
+            "DART 공시 전 단계의 신호(LOI, 발주 검토, 협상, 선주 발주 계획, 프로젝트 FID/EPC/FEED/SPA)는 '공시 전 신호'로 구분해라. "
+            "선가/척수/계약금액 숫자는 반드시 상식 범위와 혼동 가능성을 점검해라. 예: LNGC 1척을 5억 달러 이상으로 단정하지 말고 복수 척/FLNG·FSRU/프로젝트 총액 혼동 가능성을 표시해라.\n"
         )
     prompt = (
         f"너는 {sector} 섹터 투자자를 위한 데일리 리서치 애널리스트다.\n"
@@ -668,6 +705,7 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
         "출력 형식:\n"
         f"# {clip_date.isoformat()} {sector} 데일리 클리핑\n"
         "## 핵심 요약\n"
+        "## 선종별 발주 신호\n"
         "## 주요 클리핑\n"
         "## 오늘의 투자 체크포인트\n"
         "## 확인 필요\n\n"
