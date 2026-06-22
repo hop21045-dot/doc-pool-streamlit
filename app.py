@@ -75,9 +75,13 @@ SHIPBUILDING_NEWS_QUERIES = [
             "tanker newbuilding order,container ship newbuilding order,bulk carrier order,"
             "offshore wind vessel order,FSRU FLNG FPSO order,Clarksons newbuilding price,"
             "shipping rates vessel order,geopolitical shipping route tanker LNG carrier,"
-            "energy security LNG shipping,HD한국조선해양 수주,삼성중공업 수주,한화오션 수주,"
-            "현대미포조선 수주,LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,"
-            "홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선"
+            "energy security LNG shipping,US shipbuilding policy Navy MRO,India shipbuilding policy,"
+            "Make in India shipbuilding,commercial shipbuilding revival United States,"
+            "naval shipbuilding Korea MRO,HD한국조선해양 수주,HD현대중공업 수주,"
+            "삼성중공업 수주,한화오션 수주,현대미포조선 수주,대한조선 수주,HJ중공업 수주,"
+            "LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,"
+            "홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선,"
+            "미국 조선업 재건 해군 MRO,인도 조선업 육성"
         ),
     ).split(",")
     if item.strip()
@@ -351,6 +355,17 @@ DAILY_KEYWORDS: dict[str, list[str]] = {
         "삼성중공업",
         "한화오션",
         "현대미포",
+        "대한조선",
+        "HJ중공업",
+        "hj중공업",
+        "미국 조선",
+        "인도 조선",
+        "mro",
+        "해군",
+        "군함",
+        "navy",
+        "jones act",
+        "make in india",
         "조선업",
     ],
 }
@@ -674,7 +689,8 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
     else:
         focus = (
             "가스선(LNGC/LPGC/VLGC/VLAC), 탱커, 컨테이너선, 벌크선, 특수선(FSRU/FLNG/FPSO/해상풍력), "
-            "국내 조선사 수주/수주 전 신호, 신조선가, 슬롯, 운임, 지정학적 항로 차질, 에너지 안보 이슈가 "
+            "국내 조선사 수주/수주 전 신호, 미국/인도 등 국가별 조선산업 육성, 해군/특수선/MRO, "
+            "신조선가, 슬롯, 운임, 지정학적 항로 차질, 에너지 안보 이슈가 "
             "어떤 선종 발주 수요로 이어지는지 10~15개 안팎으로 정리"
         )
     company_rule = ""
@@ -683,9 +699,10 @@ def summarize_daily_with_openai(sector: str, clip_date: date, source_block: str,
             "회사명 검증 규칙: 현재 존재하는 사명 기준으로 써라. "
             "대우조선해양이라는 현재 사명은 사용하지 말고, 과거 사명 맥락이 필요할 때만 "
             "'한화오션(구 대우조선해양)'이라고 써라. "
-            "국내 주요 조선사는 HD한국조선해양/HD현대중공업/현대미포조선/삼성중공업/한화오션 등을 기준으로 확인해라.\n"
+            "국내 주요 조선사는 HD한국조선해양/HD현대중공업/현대미포조선/삼성중공업/한화오션/대한조선/HJ중공업 등을 기준으로 확인해라.\n"
             "조선 분석 규칙: 단순 수주 기사 요약에 그치지 말고, 각 이슈가 어느 선종의 발주 수요로 이어지는지 분류해라. "
             "선종 범주는 LNGC/LPGC·VLGC/VLAC·암모니아/메탄올 운반선/탱커/컨테이너선/벌크선/특수선(FSRU·FLNG·FPSO·해상풍력)/방산·군함으로 나눈다. "
+            "미국/인도 등 국가별 조선업 육성, 해군 함정 건조, MRO, 공급망 재편 이슈는 한국 조선소의 직접 수주 가능성, 기술협력, 현지 생산 제약, 중장기 경쟁구도 변화로 나눠 평가해라. "
             "지정학 이슈(홍해, 수에즈, 파나마 운하, 러시아/중동, 에너지 안보)는 운항거리, 선복 부족, 운임, 교체 발주, 에너지 운송 수요로 연결되는지 평가해라. "
             "에너지 이슈(LNG 프로젝트, LPG/암모니아/메탄올, 원유/제품선 수요)는 선종별 발주 가능성과 한국 조선소 수혜 후보로 연결해라. "
             "DART 공시 전 단계의 신호(LOI, 발주 검토, 협상, 선주 발주 계획, 프로젝트 FID/EPC/FEED/SPA)는 '공시 전 신호'로 구분해라. "

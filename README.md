@@ -33,7 +33,7 @@ python make_telegram_session.py
   - `TELEGRAM_STRING_SESSION` 선택값, Streamlit Cloud 같은 배포 환경에서 파일 세션 대신 사용
 - `SEMICON_CHANNELS`에는 반도체 클리핑에 사용할 텔레그램 채널을 쉼표로 지정합니다. 예: `lupang_channel,kaie_channel`
 - `SHIPBUILDING_CHANNELS`에는 조선 클리핑에 추가로 볼 텔레그램 채널을 지정합니다. 비워두면 조선은 업계 뉴스 RSS 중심으로 수집합니다.
-- `SHIPBUILDING_NEWS_QUERIES`에는 조선 업계 뉴스 검색어를 쉼표로 지정합니다. LNG 프로젝트뿐 아니라 가스선, 탱커, 컨테이너선, 벌크선, 특수선, 지정학, 에너지 안보, 운임/선가 이슈를 함께 넣는 것이 좋습니다.
+- `SHIPBUILDING_NEWS_QUERIES`에는 조선 업계 뉴스 검색어를 쉼표로 지정합니다. LNG 프로젝트뿐 아니라 가스선, 탱커, 컨테이너선, 벌크선, 특수선, 지정학, 에너지 안보, 운임/선가, 미국/인도 조선업 육성, 해군/MRO 이슈를 함께 넣는 것이 좋습니다.
 - `WATCH_CHANNELS`는 저장함/기본 fallback 채널입니다.
 - `SAVED_SOURCE_CHANNELS`를 지정하면 저장함은 해당 채널의 글을 저장합니다. 비워두면 `WATCH_CHANNELS`에서 하트 반응을 찾습니다.
 - 하트 반응 수집은 Telegram API가 내 반응 정보를 노출하는 경우에만 안정적으로 동작합니다. 가장 확실한 방식은 읽고 싶은 글을 별도 저장용 채널이나 Saved Messages에 전달하고 `SAVED_SOURCE_CHANNELS`에 그 채널을 지정하는 것입니다.
@@ -50,7 +50,7 @@ TELEGRAM_API_HASH=...
 WATCH_CHANNELS=DOC_POOL
 SEMICON_CHANNELS=
 SHIPBUILDING_CHANNELS=
-SHIPBUILDING_NEWS_QUERIES=LNG carrier order Korea shipyard,LPG carrier VLGC order,VLAC ammonia carrier order,tanker newbuilding order,container ship newbuilding order,bulk carrier order,offshore wind vessel order,FSRU FLNG FPSO order,Clarksons newbuilding price,shipping rates vessel order,geopolitical shipping route tanker LNG carrier,energy security LNG shipping,HD한국조선해양 수주,삼성중공업 수주,한화오션 수주,현대미포조선 수주,LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선
+SHIPBUILDING_NEWS_QUERIES=LNG carrier order Korea shipyard,LPG carrier VLGC order,VLAC ammonia carrier order,tanker newbuilding order,container ship newbuilding order,bulk carrier order,offshore wind vessel order,FSRU FLNG FPSO order,Clarksons newbuilding price,shipping rates vessel order,geopolitical shipping route tanker LNG carrier,energy security LNG shipping,US shipbuilding policy Navy MRO,India shipbuilding policy,Make in India shipbuilding,commercial shipbuilding revival United States,naval shipbuilding Korea MRO,HD한국조선해양 수주,HD현대중공업 수주,삼성중공업 수주,한화오션 수주,현대미포조선 수주,대한조선 수주,HJ중공업 수주,LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선,미국 조선업 재건 해군 MRO,인도 조선업 육성
 SAVED_SOURCE_CHANNELS=
 HEART_REACTIONS=❤️,❤,♥️,♥
 GEMINI_API_KEY=...
