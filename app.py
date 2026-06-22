@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from email.utils import parsedate_to_datetime
 import html
 import json
@@ -24,6 +25,7 @@ from report_store import (
     get_stored_report,
     hash_pdf_bytes,
     list_daily_clippings,
+    list_spot_price_posts,
     list_saved_items,
     register_pdf,
     save_daily_clipping,
@@ -31,6 +33,7 @@ from report_store import (
     save_detailed_analysis,
     save_extracted_text,
     save_saved_item,
+    save_spot_price_post,
     update_saved_item_metadata,
 )
 
@@ -86,6 +89,7 @@ SHIPBUILDING_NEWS_QUERIES = [
     ).split(",")
     if item.strip()
 ]
+SPOT_PRICE_CHANNEL = os.getenv("SPOT_PRICE_CHANNEL", "kiwoom_semibat").strip().lstrip("@")
 SAVED_SOURCE_CHANNELS = [
     item.strip().lstrip("@")
     for item in os.getenv("SAVED_SOURCE_CHANNELS", "").split(",")
@@ -106,6 +110,7 @@ DETAIL_TARGET_SECTORS = [
 ]
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 PDF_DIR = Path("data/pdfs")
+SPOT_IMAGE_DIR = Path("data/spot_images")
 
 RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
 READING_VALUE_ORDER = {
@@ -644,6 +649,108 @@ def generate_daily_clipping(sector: str, clip_date: date, max_items: int = 15) -
         len(posts),
     )
     return summary
+
+
+def collect_spot_price_posts(limit: int = 1000, parse_images: bool = True) -> int:
+    if not should_use_telethon():
+        raise RuntimeError("반도체 스팟가격 수집은 Telegram API 세션이 필요합니다.")
+    return asyncio.run(collect_spot_price_posts_with_telethon(limit, parse_images))
+
+
+async def collect_spot_price_posts_with_telethon(limit: int, parse_images: bool) -> int:
+    from telethon import TelegramClient
+
+    api_id = int(os.environ["TELEGRAM_API_ID"])
+    api_hash = os.environ["TELEGRAM_API_HASH"]
+    client = TelegramClient(get_telegram_session_arg(), api_id, api_hash)
+    saved_count = 0
+
+    async with client:
+        if not await client.is_user_authorized():
+            raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
+        async for message in client.iter_messages(SPOT_PRICE_CHANNEL, limit=limit):
+            raw_text = normalize_text(message.message or "")
+            image_path = ""
+            parsed_json: dict[str, Any] = {}
+            image_bytes = None
+            if getattr(message, "photo", None):
+                try:
+                    image_bytes = await client.download_media(message, file=bytes)
+                    if image_bytes:
+                        image_path = save_spot_image(str(message.id), image_bytes)
+                        if parse_images and os.getenv("GEMINI_API_KEY"):
+                            parsed_json = parse_spot_price_image_with_gemini(image_bytes, raw_text)
+                except Exception as exc:
+                    parsed_json = {"error": f"이미지 처리 실패: {exc}"}
+
+            if not raw_text and not image_path:
+                continue
+            save_spot_price_post(
+                message_id=str(message.id),
+                channel=SPOT_PRICE_CHANNEL,
+                posted_at=message.date.isoformat() if message.date else "",
+                text=raw_text,
+                telegram_link=build_telegram_message_link(SPOT_PRICE_CHANNEL, message),
+                image_path=image_path,
+                parsed_json=parsed_json,
+            )
+            saved_count += 1
+    return saved_count
+
+
+def save_spot_image(message_id: str, image_bytes: bytes) -> str:
+    SPOT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hash_pdf_bytes(image_bytes)
+    path = SPOT_IMAGE_DIR / f"{message_id}_{digest[:12]}.jpg"
+    if not path.exists():
+        path.write_bytes(image_bytes)
+    return str(path)
+
+
+def parse_spot_price_image_with_gemini(image_bytes: bytes, message_text: str) -> dict[str, Any]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return {}
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={api_key}"
+    )
+    prompt = (
+        "이미지는 DRAMeXchange 반도체 메모리 스팟가격 표입니다. "
+        "표의 각 행을 가능한 한 정확히 읽어 JSON으로 추출하세요. "
+        "숫자를 추측하지 말고 읽기 어려우면 null을 넣으세요. "
+        "출력은 JSON 객체 하나만 반환하세요.\n\n"
+        "스키마:\n"
+        "{"
+        "\"rows\":[{\"model\":\"\",\"item\":\"\",\"daily_high\":null,\"daily_low\":null,"
+        "\"session_high\":null,\"session_low\":null,\"session_average\":null,"
+        "\"session_change_pct\":null,\"weekly_high\":null,\"weekly_low\":null}],"
+        "\"summary\":\"표에서 보이는 핵심 변화 1~3문장\","
+        "\"source_text\":\"게시글 원문 요약\""
+        "}\n\n"
+        f"게시글 원문:\n{message_text[:1000]}"
+    )
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": base64.b64encode(image_bytes).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {"temperature": 0.1},
+    }
+    response = requests.post(url, json=payload, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return parse_json_object(text)
 
 
 def normalize_company_names(text: str) -> str:
@@ -1639,6 +1746,88 @@ def render_daily_clipping() -> None:
             )
 
 
+def render_spot_price_status() -> None:
+    st.subheader("반도체 스팟가격 현황")
+    st.caption(
+        f"텔레그램 @{SPOT_PRICE_CHANNEL} 채널의 과거 스팟가격 게시글을 수집합니다. "
+        "이미지 표는 GEMINI_API_KEY가 있을 때 JSON으로 추출합니다."
+    )
+    cols = st.columns([1, 1, 2])
+    limit = cols[0].number_input("확인할 과거 글 수", min_value=50, max_value=10000, value=1000, step=50)
+    parse_images = cols[1].toggle("이미지 표 추출", value=True)
+    if cols[2].button("스팟가격 수집/갱신", type="primary"):
+        with st.spinner("반도체 스팟가격 게시글을 수집하는 중..."):
+            count = collect_spot_price_posts(int(limit), parse_images)
+        st.success(f"{count}개 스팟가격 게시글을 저장/갱신했습니다.")
+
+    posts = list_spot_price_posts()
+    if not posts:
+        st.info("아직 저장된 반도체 스팟가격 데이터가 없습니다.")
+        return
+
+    rows = []
+    parsed_rows = []
+    for post in posts:
+        parsed = post.parsed_json or {}
+        rows.append(
+            {
+                "게시시각": format_datetime(post.posted_at),
+                "채널": post.channel,
+                "요약": parsed.get("summary", ""),
+                "원문": post.text,
+                "이미지": post.image_path,
+                "링크": post.telegram_link,
+                "메시지ID": post.message_id,
+            }
+        )
+        for row in (parsed.get("rows", []) if isinstance(parsed.get("rows"), list) else []):
+            if isinstance(row, dict):
+                parsed_rows.append(
+                    {
+                        "게시시각": format_datetime(post.posted_at),
+                        "품목": row.get("item", ""),
+                        "모델": row.get("model", ""),
+                        "Daily High": row.get("daily_high"),
+                        "Daily Low": row.get("daily_low"),
+                        "Session Average": row.get("session_average"),
+                        "Session Change %": row.get("session_change_pct"),
+                        "Weekly High": row.get("weekly_high"),
+                        "Weekly Low": row.get("weekly_low"),
+                        "메시지ID": post.message_id,
+                    }
+                )
+
+    tab_posts, tab_table = st.tabs(["게시글", "가격표"])
+    with tab_posts:
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df.drop(columns=["원문", "이미지", "메시지ID"]),
+            use_container_width=True,
+            hide_index=True,
+            column_config={"링크": st.column_config.LinkColumn("링크")},
+        )
+        for row in rows[:30]:
+            with st.expander(f"{row['게시시각']} | {row['요약'] or row['원문'][:60]}"):
+                if row["링크"]:
+                    st.markdown(f"[원문 링크 열기]({row['링크']})")
+                st.write(row["원문"])
+                if row["이미지"] and Path(row["이미지"]).exists():
+                    st.image(row["이미지"])
+
+    with tab_table:
+        if parsed_rows:
+            st.dataframe(pd.DataFrame(parsed_rows), use_container_width=True, hide_index=True)
+            csv = pd.DataFrame(parsed_rows).to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "가격표 CSV 다운로드",
+                data=csv,
+                file_name="semiconductor_spot_prices.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("아직 추출된 가격표 JSON이 없습니다. GEMINI_API_KEY를 설정하고 이미지 표 추출을 켠 뒤 다시 수집하세요.")
+
+
 def render_report_classifier() -> None:
     st.subheader("DOC_POOL 리포트 분류")
     st.caption("텔레그램 공개 채널 게시글을 섹터별로 분류하고 읽어볼 우선순위와 요약을 보여줍니다.")
@@ -1766,12 +1955,14 @@ def main() -> None:
     st.caption("하트/저장 글과 섹터별 데일리 클리핑을 누적 관리합니다.")
 
     with st.sidebar:
-        page = st.radio("화면", ["저장함", "데일리 클리핑"], index=0)
+        page = st.radio("화면", ["저장함", "데일리 클리핑", "반도체 스팟가격 현황"], index=0)
 
     if page == "저장함":
         render_saved_library()
     elif page == "데일리 클리핑":
         render_daily_clipping()
+    else:
+        render_spot_price_status()
 
 
 @st.cache_data(ttl=300, show_spinner="텔레그램 채널을 읽는 중...")

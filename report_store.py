@@ -59,6 +59,18 @@ class DailyClipping:
     created_at: str
 
 
+@dataclass(frozen=True)
+class SpotPricePost:
+    message_id: str
+    channel: str
+    posted_at: str
+    text: str
+    telegram_link: str
+    image_path: str
+    parsed_json: dict[str, Any]
+    created_at: str
+
+
 def ensure_db(path: Path = DB_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
@@ -154,6 +166,21 @@ def ensure_db(path: Path = DB_PATH) -> None:
                 source_count INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(clip_date, sector)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spot_price_posts (
+                message_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                posted_at TEXT,
+                text TEXT,
+                telegram_link TEXT,
+                image_path TEXT,
+                parsed_json TEXT,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(message_id, channel)
             )
             """
         )
@@ -432,3 +459,61 @@ def list_daily_clippings(sector: str | None = None, path: Path = DB_PATH) -> lis
     with sqlite3.connect(path) as conn:
         rows = conn.execute(query, params).fetchall()
     return [DailyClipping(*row) for row in rows]
+
+
+def save_spot_price_post(
+    message_id: str,
+    channel: str,
+    posted_at: str,
+    text: str,
+    telegram_link: str,
+    image_path: str,
+    parsed_json: dict[str, Any] | None,
+    path: Path = DB_PATH,
+) -> None:
+    ensure_db(path)
+    now = datetime.now().isoformat(timespec="seconds")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO spot_price_posts
+            (message_id, channel, posted_at, text, telegram_link, image_path, parsed_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                channel,
+                posted_at,
+                text,
+                telegram_link,
+                image_path,
+                json.dumps(parsed_json or {}, ensure_ascii=False),
+                now,
+            ),
+        )
+
+
+def list_spot_price_posts(path: Path = DB_PATH) -> list[SpotPricePost]:
+    ensure_db(path)
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT message_id, channel, posted_at, text, telegram_link, image_path,
+                   COALESCE(parsed_json, '{}'), created_at
+            FROM spot_price_posts
+            ORDER BY posted_at DESC
+            """
+        ).fetchall()
+    return [
+        SpotPricePost(
+            message_id=row[0],
+            channel=row[1],
+            posted_at=row[2],
+            text=row[3],
+            telegram_link=row[4],
+            image_path=row[5],
+            parsed_json=json.loads(row[6] or "{}"),
+            created_at=row[7],
+        )
+        for row in rows
+    ]
