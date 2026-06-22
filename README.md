@@ -7,7 +7,7 @@
 - `저장함`: 내가 하트 표시한 글 또는 저장용 채널로 전달한 글을 PDF와 함께 보관합니다.
 - 저장한 글마다 웹페이지에서 관련 섹터, 관련 기업명, 태그, 메모를 직접 입력해 카테고리화할 수 있습니다.
 - `데일리 클리핑`: 반도체/조선 섹터 관련 텔레그램 글을 날짜별로 모아 GPT 코멘트가 포함된 Markdown 데일리 노트로 누적 저장합니다.
-- `반도체 스팟가격 현황`: 키움 반도체 채널의 DRAMeXchange 스팟가격 게시글과 이미지 표를 별도 카테고리로 저장하고 조회합니다.
+- `반도체 스팟가격 현황`: 키움 반도체 채널의 DRAMeXchange 스팟가격 게시글과 이미지 표를 별도 카테고리로 저장하고 조회합니다. 과거 데이터는 Telegram Desktop export ZIP/JSON으로 한 번에 가져오고, 이후에는 GitHub Actions가 최신 글을 자동 수집합니다.
 
 ## 실행
 
@@ -36,6 +36,7 @@ python make_telegram_session.py
 - `SHIPBUILDING_CHANNELS`에는 조선 클리핑에 추가로 볼 텔레그램 채널을 지정합니다. 비워두면 조선은 업계 뉴스 RSS 중심으로 수집합니다.
 - `SHIPBUILDING_NEWS_QUERIES`에는 조선 업계 뉴스 검색어를 쉼표로 지정합니다. LNG 프로젝트뿐 아니라 가스선, 탱커, 컨테이너선, 벌크선, 특수선, 지정학, 에너지 안보, 운임/선가, 미국/인도 조선업 육성, 해군/MRO 이슈를 함께 넣는 것이 좋습니다.
 - `SPOT_PRICE_CHANNEL`에는 반도체 스팟가격 게시글을 올리는 텔레그램 채널명을 지정합니다. 기본값은 `kiwoom_semibat`입니다.
+- `SPOT_PRICE_DAILY_LIMIT`에는 매일 자동으로 확인할 스팟가격 최신 글 수를 지정합니다. 기본값은 `30`입니다.
 - `WATCH_CHANNELS`는 저장함/기본 fallback 채널입니다.
 - `SAVED_SOURCE_CHANNELS`를 지정하면 저장함은 해당 채널의 글을 저장합니다. 비워두면 `WATCH_CHANNELS`에서 하트 반응을 찾습니다.
 - 하트 반응 수집은 Telegram API가 내 반응 정보를 노출하는 경우에만 안정적으로 동작합니다. 가장 확실한 방식은 읽고 싶은 글을 별도 저장용 채널이나 Saved Messages에 전달하고 `SAVED_SOURCE_CHANNELS`에 그 채널을 지정하는 것입니다.
@@ -54,6 +55,7 @@ SEMICON_CHANNELS=
 SHIPBUILDING_CHANNELS=
 SHIPBUILDING_NEWS_QUERIES=LNG carrier order Korea shipyard,LPG carrier VLGC order,VLAC ammonia carrier order,tanker newbuilding order,container ship newbuilding order,bulk carrier order,offshore wind vessel order,FSRU FLNG FPSO order,Clarksons newbuilding price,shipping rates vessel order,geopolitical shipping route tanker LNG carrier,energy security LNG shipping,US shipbuilding policy Navy MRO,India shipbuilding policy,Make in India shipbuilding,commercial shipbuilding revival United States,naval shipbuilding Korea MRO,HD한국조선해양 수주,HD현대중공업 수주,삼성중공업 수주,한화오션 수주,현대미포조선 수주,대한조선 수주,HJ중공업 수주,LNG선 발주 VLGC 탱커 컨테이너선,해운 운임 선박 발주,홍해 수에즈 파나마 운하 해운 조선,에너지 안보 LNG 운반선 조선,미국 조선업 재건 해군 MRO,인도 조선업 육성
 SPOT_PRICE_CHANNEL=kiwoom_semibat
+SPOT_PRICE_DAILY_LIMIT=30
 SAVED_SOURCE_CHANNELS=
 HEART_REACTIONS=❤️,❤,♥️,♥
 GEMINI_API_KEY=...

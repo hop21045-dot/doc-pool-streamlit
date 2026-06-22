@@ -4,10 +4,12 @@ import asyncio
 import base64
 from email.utils import parsedate_to_datetime
 import html
+import io
 import json
 import os
 import re
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -751,6 +753,115 @@ def parse_spot_price_image_with_gemini(image_bytes: bytes, message_text: str) ->
     data = response.json()
     text = data["candidates"][0]["content"]["parts"][0]["text"]
     return parse_json_object(text)
+
+
+def import_spot_price_export(file_name: str, file_bytes: bytes, parse_images: bool = True) -> int:
+    suffix = Path(file_name).suffix.lower()
+    if suffix == ".zip":
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            json_name = next(
+                (name for name in archive.namelist() if name.endswith("result.json")),
+                None,
+            )
+            if not json_name:
+                json_name = next((name for name in archive.namelist() if name.endswith(".json")), None)
+            if not json_name:
+                raise RuntimeError("ZIP 안에서 Telegram export JSON 파일을 찾지 못했습니다.")
+            data = json.loads(archive.read(json_name).decode("utf-8"))
+            return import_spot_price_export_data(data, archive, parse_images)
+
+    data = json.loads(file_bytes.decode("utf-8"))
+    return import_spot_price_export_data(data, None, parse_images)
+
+
+def import_spot_price_export_data(
+    data: dict[str, Any],
+    archive: zipfile.ZipFile | None,
+    parse_images: bool,
+) -> int:
+    saved_count = 0
+    for chat in iter_export_chats(data):
+        channel = normalize_text(str(chat.get("name") or chat.get("id") or SPOT_PRICE_CHANNEL))
+        for message in chat.get("messages", []) or []:
+            if message.get("type") != "message":
+                continue
+            raw_text = normalize_text(extract_export_text(message.get("text", "")))
+            image_ref = extract_export_image_ref(message)
+            if not raw_text and not image_ref:
+                continue
+            if raw_text and not looks_like_spot_price_post(raw_text) and not image_ref:
+                continue
+
+            image_path = ""
+            parsed_json: dict[str, Any] = {}
+            image_bytes = read_export_image_bytes(archive, image_ref) if image_ref else None
+            if image_bytes:
+                image_path = save_spot_image(f"export_{message.get('id', '')}", image_bytes)
+                if parse_images and os.getenv("GEMINI_API_KEY"):
+                    try:
+                        parsed_json = parse_spot_price_image_with_gemini(image_bytes, raw_text)
+                    except Exception as exc:
+                        parsed_json = {"error": f"이미지 표 추출 실패: {exc}"}
+
+            message_id = str(message.get("id", ""))
+            save_spot_price_post(
+                message_id=message_id,
+                channel=channel or SPOT_PRICE_CHANNEL,
+                posted_at=str(message.get("date") or ""),
+                text=raw_text,
+                telegram_link=f"https://t.me/{SPOT_PRICE_CHANNEL}/{message_id}" if message_id else "",
+                image_path=image_path,
+                parsed_json=parsed_json,
+            )
+            saved_count += 1
+    return saved_count
+
+
+def iter_export_chats(data: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(data.get("messages"), list):
+        return [data]
+    chats = data.get("chats", {}).get("list", [])
+    if isinstance(chats, list):
+        return chats
+    return []
+
+
+def extract_export_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text", "")))
+        return " ".join(parts)
+    return ""
+
+
+def extract_export_image_ref(message: dict[str, Any]) -> str:
+    for key in ["photo", "file", "thumbnail"]:
+        value = message.get(key)
+        if isinstance(value, str) and value.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+            return value
+    return ""
+
+
+def read_export_image_bytes(archive: zipfile.ZipFile | None, image_ref: str) -> bytes | None:
+    if not archive or not image_ref:
+        return None
+    normalized_ref = image_ref.replace("\\", "/").lstrip("/")
+    names = archive.namelist()
+    match = next((name for name in names if name.replace("\\", "/") == normalized_ref), None)
+    if not match:
+        match = next((name for name in names if name.replace("\\", "/").endswith(normalized_ref)), None)
+    return archive.read(match) if match else None
+
+
+def looks_like_spot_price_post(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in ["spot", "스팟", "dramexchange", "dram", "ddr4", "ddr5"])
 
 
 def normalize_company_names(text: str) -> str:
@@ -1752,6 +1863,19 @@ def render_spot_price_status() -> None:
         f"텔레그램 @{SPOT_PRICE_CHANNEL} 채널의 과거 스팟가격 게시글을 수집합니다. "
         "이미지 표는 GEMINI_API_KEY가 있을 때 JSON으로 추출합니다."
     )
+    with st.expander("Telegram export로 과거 데이터 한 번에 가져오기", expanded=False):
+        st.caption("Telegram Desktop에서 JSON 형식으로 채널을 export한 ZIP 또는 result.json을 업로드하세요. ZIP을 올리면 이미지 표도 함께 저장됩니다.")
+        export_file = st.file_uploader("Telegram export ZIP/JSON", type=["zip", "json"])
+        export_parse_images = st.toggle("업로드 이미지 표 추출", value=True)
+        if export_file and st.button("Export 데이터 가져오기", type="primary"):
+            with st.spinner("Telegram export를 읽어 스팟가격 데이터를 저장하는 중..."):
+                count = import_spot_price_export(
+                    file_name=export_file.name,
+                    file_bytes=export_file.getvalue(),
+                    parse_images=export_parse_images,
+                )
+            st.success(f"{count}개 export 메시지를 저장/갱신했습니다.")
+
     cols = st.columns([1, 1, 2])
     limit = cols[0].number_input("확인할 과거 글 수", min_value=50, max_value=10000, value=1000, step=50)
     parse_images = cols[1].toggle("이미지 표 추출", value=True)
