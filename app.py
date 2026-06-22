@@ -672,6 +672,8 @@ async def collect_spot_price_posts_with_telethon(limit: int, parse_images: bool)
             raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
         async for message in client.iter_messages(SPOT_PRICE_CHANNEL, limit=limit):
             raw_text = normalize_text(message.message or "")
+            if not looks_like_spot_price_post(raw_text):
+                continue
             image_path = ""
             parsed_json: dict[str, Any] = {}
             image_bytes = None
@@ -789,7 +791,7 @@ def import_spot_price_export_data(
             image_ref = extract_export_image_ref(message)
             if not raw_text and not image_ref:
                 continue
-            if raw_text and not looks_like_spot_price_post(raw_text) and not image_ref:
+            if not looks_like_spot_price_post(raw_text):
                 continue
 
             image_path = ""
@@ -861,7 +863,7 @@ def read_export_image_bytes(archive: zipfile.ZipFile | None, image_ref: str) -> 
 
 def looks_like_spot_price_post(text: str) -> bool:
     lowered = text.lower()
-    return any(keyword in lowered for keyword in ["spot", "스팟", "dramexchange", "dram", "ddr4", "ddr5"])
+    return "dramexchange" in lowered
 
 
 def normalize_company_names(text: str) -> str:
