@@ -862,8 +862,12 @@ def read_export_image_bytes(archive: zipfile.ZipFile | None, image_ref: str) -> 
 
 
 def looks_like_spot_price_post(text: str) -> bool:
-    lowered = text.lower()
-    return "dramexchange" in lowered
+    normalized = normalize_text(text).strip()
+    return (
+        normalized.startswith("키움 반도체 박유악입니다.")
+        and "출처: DRAMeXchange" in normalized
+        and normalized.endswith("[박유악 키움 반도체]")
+    )
 
 
 def normalize_company_names(text: str) -> str:
