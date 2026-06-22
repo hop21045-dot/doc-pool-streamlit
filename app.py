@@ -757,6 +757,57 @@ def parse_spot_price_image_with_gemini(image_bytes: bytes, message_text: str) ->
     return parse_json_object(text)
 
 
+def parse_spot_price_image_with_gemini(image_bytes: bytes, message_text: str) -> dict[str, Any]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return {}
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={api_key}"
+    )
+    prompt = (
+        "The image is a DRAMeXchange memory semiconductor spot-price table. "
+        "Extract every visible table row as accurately as possible. "
+        "Do not guess unreadable numbers; use null when uncertain. "
+        "Return only one valid JSON object, without markdown fences.\n\n"
+        "Required schema:\n"
+        "{"
+        "\"rows\":[{\"model\":\"\",\"item\":\"\",\"daily_high\":null,\"daily_low\":null,"
+        "\"session_high\":null,\"session_low\":null,\"session_average\":null,"
+        "\"session_change_pct\":null,\"weekly_high\":null,\"weekly_low\":null}],"
+        "\"summary\":\"1-3 Korean sentences summarizing the broad price movement\","
+        "\"source_text\":\"short Korean summary of the Telegram post\""
+        "}\n\n"
+        "Rules:\n"
+        "- Use numeric values only for price and percent fields. Remove commas and percent signs.\n"
+        "- Preserve product names exactly, e.g. DDR5 16Gb (2Gx8) 4800/5600.\n"
+        "- session_change_pct must be percentage points, e.g. -1.60 for -1.60%.\n"
+        "- If a row is partially unreadable, still include it with null for unreadable cells.\n\n"
+        f"Telegram post text:\n{message_text[:1000]}"
+    )
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": base64.b64encode(image_bytes).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {"temperature": 0.1},
+    }
+    response = requests.post(url, json=payload, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return parse_json_object(text)
+
+
 def import_spot_price_export(file_name: str, file_bytes: bytes, parse_images: bool = True) -> int:
     suffix = Path(file_name).suffix.lower()
     if suffix == ".zip":
@@ -1863,6 +1914,59 @@ def render_daily_clipping() -> None:
             )
 
 
+def spot_value_to_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    cleaned = str(value).replace(",", "").replace("%", "").strip()
+    if not cleaned or cleaned.lower() in {"null", "none", "n/a", "na", "-"}:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def build_spot_price_dataframe(posts: list[Any]) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    for post in posts:
+        parsed = post.parsed_json or {}
+        rows = parsed.get("rows", [])
+        if not isinstance(rows, list):
+            continue
+        posted_at = pd.to_datetime(post.posted_at, errors="coerce")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = str(row.get("item") or "").strip()
+            model = str(row.get("model") or "").strip()
+            if not item and not model:
+                continue
+            records.append(
+                {
+                    "posted_at": posted_at,
+                    "date": posted_at.date() if not pd.isna(posted_at) else None,
+                    "item": item,
+                    "model": model,
+                    "daily_high": spot_value_to_float(row.get("daily_high")),
+                    "daily_low": spot_value_to_float(row.get("daily_low")),
+                    "session_high": spot_value_to_float(row.get("session_high")),
+                    "session_low": spot_value_to_float(row.get("session_low")),
+                    "session_average": spot_value_to_float(row.get("session_average")),
+                    "session_change_pct": spot_value_to_float(row.get("session_change_pct")),
+                    "weekly_high": spot_value_to_float(row.get("weekly_high")),
+                    "weekly_low": spot_value_to_float(row.get("weekly_low")),
+                    "message_id": post.message_id,
+                    "telegram_link": post.telegram_link,
+                }
+            )
+    if not records:
+        return pd.DataFrame()
+    df = pd.DataFrame(records)
+    return df.sort_values(["item", "posted_at"])
+
+
 def render_spot_price_status() -> None:
     st.subheader("반도체 스팟가격 현황")
     st.caption(
@@ -1927,6 +2031,32 @@ def render_spot_price_status() -> None:
                     }
                 )
 
+    spot_df = build_spot_price_dataframe(posts)
+    if not spot_df.empty:
+        st.subheader("가격 차트")
+        item_options = sorted(spot_df["item"].dropna().unique().tolist())
+        selected_item = st.selectbox("제품 선택", item_options)
+        metric_options = {
+            "Session Average": "session_average",
+            "Daily High": "daily_high",
+            "Daily Low": "daily_low",
+            "Session Change %": "session_change_pct",
+            "Weekly High": "weekly_high",
+            "Weekly Low": "weekly_low",
+        }
+        selected_metrics = st.multiselect(
+            "차트 지표",
+            list(metric_options.keys()),
+            default=["Session Average", "Daily High", "Daily Low"],
+        )
+        selected_columns = [metric_options[name] for name in selected_metrics]
+        chart_df = spot_df[spot_df["item"] == selected_item].copy()
+        chart_df = chart_df.dropna(subset=["posted_at"]).sort_values("posted_at")
+        if selected_columns and not chart_df.empty:
+            st.line_chart(chart_df.set_index("posted_at")[selected_columns])
+        elif not selected_columns:
+            st.warning("차트로 볼 지표를 하나 이상 선택하세요.")
+
     tab_posts, tab_table = st.tabs(["게시글", "가격표"])
     with tab_posts:
         df = pd.DataFrame(rows)
@@ -1945,15 +2075,19 @@ def render_spot_price_status() -> None:
                     st.image(row["이미지"])
 
     with tab_table:
-        if parsed_rows:
-            st.dataframe(pd.DataFrame(parsed_rows), use_container_width=True, hide_index=True)
-            csv = pd.DataFrame(parsed_rows).to_csv(index=False).encode("utf-8-sig")
+        if not spot_df.empty:
+            display_df = spot_df.copy()
+            display_df["posted_at"] = display_df["posted_at"].astype(str)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            csv = display_df.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 "가격표 CSV 다운로드",
                 data=csv,
                 file_name="semiconductor_spot_prices.csv",
                 mime="text/csv",
             )
+        elif parsed_rows:
+            st.dataframe(pd.DataFrame(parsed_rows), use_container_width=True, hide_index=True)
         else:
             st.info("아직 추출된 가격표 JSON이 없습니다. GEMINI_API_KEY를 설정하고 이미지 표 추출을 켠 뒤 다시 수집하세요.")
 
