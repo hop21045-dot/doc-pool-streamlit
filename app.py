@@ -37,6 +37,7 @@ from report_store import (
     save_saved_item,
     save_spot_price_post,
     update_saved_item_metadata,
+    update_saved_item_heart_status,
 )
 
 
@@ -495,9 +496,16 @@ async def collect_saved_messages_with_telethon(limit: int, include_heart_reactio
             raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
         for channel in channels:
             async for message in client.iter_messages(channel, limit=limit):
-                if include_heart_reactions and not message_has_own_heart_reaction(message):
+                has_heart = message_has_own_heart_reaction(message)
+                if include_heart_reactions and not has_heart:
+                    update_saved_item_heart_status(str(message.id), channel, "released")
                     continue
-                saved_count += await persist_message_as_saved_item(client, channel, message)
+                saved_count += await persist_message_as_saved_item(
+                    client,
+                    channel,
+                    message,
+                    heart_status="active" if has_heart else "untracked",
+                )
     return saved_count
 
 
@@ -1059,7 +1067,12 @@ def message_has_own_heart_reaction(message: object) -> bool:
     return False
 
 
-async def persist_message_as_saved_item(client: object, channel: str, message: object) -> int:
+async def persist_message_as_saved_item(
+    client: object,
+    channel: str,
+    message: object,
+    heart_status: str = "active",
+) -> int:
     text_parts = [message.message or ""]
     document_name = get_telethon_document_name(message)
     if document_name:
@@ -1116,6 +1129,7 @@ async def persist_message_as_saved_item(client: object, channel: str, message: o
         file_name=document_name,
         pdf_hash=pdf_hash,
         media_paths=media_paths,
+        heart_status=heart_status,
     )
     return 1
 
@@ -1874,18 +1888,26 @@ def render_saved_library() -> None:
             "PDF 해시": item.pdf_hash,
             "메모": item.user_note,
             "media_paths": item.media_paths,
+            "heart_status": item.heart_status,
+            "heart_checked_at": item.heart_checked_at,
         }
         for item in saved_items
     ]
     df = pd.DataFrame(rows)
-    filter_cols = st.columns([1, 1, 2])
+    filter_cols = st.columns([1, 1, 1, 2])
     sector_options = ["전체"] + sorted([value for value in df["사용자 섹터"].dropna().unique().tolist() if value])
     selected_sector = filter_cols[0].selectbox("사용자 섹터 필터", sector_options)
-    company_query = filter_cols[1].text_input("기업명 검색")
-    text_query = filter_cols[2].text_input("본문/제목/태그 검색")
+    status_labels = {"active": "활성", "released": "하트 해제됨", "untracked": "전체 저장"}
+    status_options = ["전체", "활성", "하트 해제됨", "전체 저장"]
+    selected_status = filter_cols[1].selectbox("하트 상태", status_options)
+    company_query = filter_cols[2].text_input("기업명 검색")
+    text_query = filter_cols[3].text_input("본문/제목/태그 검색")
     filtered = df.copy()
     if selected_sector != "전체":
         filtered = filtered[filtered["사용자 섹터"] == selected_sector]
+    if selected_status != "전체":
+        reverse_status = {label: key for key, label in status_labels.items()}
+        filtered = filtered[filtered["heart_status"] == reverse_status[selected_status]]
     if company_query:
         filtered = filtered[filtered["기업명"].str.contains(company_query, case=False, na=False)]
     if text_query:
@@ -1893,7 +1915,8 @@ def render_saved_library() -> None:
         filtered = filtered[mask]
 
     st.dataframe(
-        filtered.drop(columns=["본문", "PDF 해시", "메시지ID", "메모", "링크", "media_paths"]),
+        filtered.assign(하트상태=filtered["heart_status"].map(status_labels).fillna(filtered["heart_status"]))
+        .drop(columns=["본문", "PDF 해시", "메시지ID", "메모", "링크", "media_paths", "heart_status"]),
         use_container_width=True,
         hide_index=True,
     )
@@ -1906,6 +1929,7 @@ def render_saved_library() -> None:
             st.write(row["본문"])
             if row["PDF 해시"]:
                 st.caption(f"PDF 해시: {row['PDF 해시']}")
+            st.caption(f"하트 상태: {status_labels.get(row['heart_status'], row['heart_status'])}")
             for media_path in row["media_paths"] or []:
                 if media_path and Path(media_path).exists():
                     st.image(media_path)
