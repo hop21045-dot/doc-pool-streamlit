@@ -113,6 +113,7 @@ DETAIL_TARGET_SECTORS = [
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 PDF_DIR = Path("data/pdfs")
 SPOT_IMAGE_DIR = Path("data/spot_images")
+SAVED_MEDIA_DIR = Path("data/saved_media")
 
 RATING_ORDER = {"C": 1, "B": 2, "B+": 3, "A": 4, "A+": 5}
 READING_VALUE_ORDER = {
@@ -410,6 +411,42 @@ def save_pdf_bytes(pdf_hash: str, pdf_bytes: bytes) -> Path:
     if not path.exists():
         path.write_bytes(pdf_bytes)
     return path
+
+
+def save_saved_media_bytes(message_id: str, media_bytes: bytes, suffix: str = ".jpg") -> str:
+    SAVED_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hash_pdf_bytes(media_bytes)
+    clean_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    path = SAVED_MEDIA_DIR / f"{message_id}_{digest[:12]}{clean_suffix.lower()}"
+    if not path.exists():
+        path.write_bytes(media_bytes)
+    return str(path)
+
+
+def get_saved_media_suffix(message: object, document_name: str = "") -> str:
+    if document_name:
+        suffix = Path(document_name).suffix
+        if suffix:
+            return suffix
+    media = getattr(message, "media", None)
+    document = getattr(media, "document", None)
+    mime_type = getattr(document, "mime_type", "") or ""
+    if mime_type == "image/png":
+        return ".png"
+    if mime_type == "image/webp":
+        return ".webp"
+    return ".jpg"
+
+
+def message_has_image_media(message: object, document_name: str = "") -> bool:
+    if getattr(message, "photo", None):
+        return True
+    media = getattr(message, "media", None)
+    document = getattr(media, "document", None)
+    mime_type = getattr(document, "mime_type", "") or ""
+    if mime_type.startswith("image/"):
+        return True
+    return Path(document_name).suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def fetch_channel_posts(
@@ -1034,6 +1071,7 @@ async def persist_message_as_saved_item(client: object, channel: str, message: o
     message_id = str(message.id)
     link = build_telegram_message_link(channel, message)
     pdf_hash = ""
+    media_paths: list[str] = []
     if document_name.lower().endswith(".pdf"):
         try:
             pdf_bytes = await client.download_media(message, file=bytes)
@@ -1054,6 +1092,19 @@ async def persist_message_as_saved_item(client: object, channel: str, message: o
                         save_extracted_text(pdf_hash, extracted_text)
         except Exception:
             pdf_hash = ""
+    elif message_has_image_media(message, document_name):
+        try:
+            media_bytes = await client.download_media(message, file=bytes)
+            if media_bytes:
+                media_paths.append(
+                    save_saved_media_bytes(
+                        message_id=message_id,
+                        media_bytes=media_bytes,
+                        suffix=get_saved_media_suffix(message, document_name),
+                    )
+                )
+        except Exception:
+            media_paths = []
 
     save_saved_item(
         message_id=message_id,
@@ -1064,6 +1115,7 @@ async def persist_message_as_saved_item(client: object, channel: str, message: o
         telegram_link=link,
         file_name=document_name,
         pdf_hash=pdf_hash,
+        media_paths=media_paths,
     )
     return 1
 
@@ -1821,6 +1873,7 @@ def render_saved_library() -> None:
             "본문": item.text,
             "PDF 해시": item.pdf_hash,
             "메모": item.user_note,
+            "media_paths": item.media_paths,
         }
         for item in saved_items
     ]
@@ -1840,7 +1893,7 @@ def render_saved_library() -> None:
         filtered = filtered[mask]
 
     st.dataframe(
-        filtered.drop(columns=["본문", "PDF 해시", "메시지ID", "메모", "링크"]),
+        filtered.drop(columns=["본문", "PDF 해시", "메시지ID", "메모", "링크", "media_paths"]),
         use_container_width=True,
         hide_index=True,
     )
@@ -1853,6 +1906,9 @@ def render_saved_library() -> None:
             st.write(row["본문"])
             if row["PDF 해시"]:
                 st.caption(f"PDF 해시: {row['PDF 해시']}")
+            for media_path in row["media_paths"] or []:
+                if media_path and Path(media_path).exists():
+                    st.image(media_path)
             with st.form(f"saved-meta-{row['채널']}-{row['메시지ID']}"):
                 form_cols = st.columns([1, 1, 1])
                 user_sector = form_cols[0].text_input("관련 섹터", value=row["사용자 섹터"])

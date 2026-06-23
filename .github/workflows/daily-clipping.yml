@@ -48,6 +48,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f data/reports.sqlite3
+          git add -f data/pdfs || true
+          git add -f data/saved_media || true
           git add -f data/spot_images || true
           if git diff --cached --quiet; then
             echo "No database changes to commit."

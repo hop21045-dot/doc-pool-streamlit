@@ -47,6 +47,7 @@ class SavedItem:
     company_names: str
     user_tags: str
     user_note: str
+    media_paths: list[str]
 
 
 @dataclass(frozen=True)
@@ -153,7 +154,7 @@ def ensure_db(path: Path = DB_PATH) -> None:
             row[1]
             for row in conn.execute("PRAGMA table_info(saved_items)").fetchall()
         }
-        for column_name in ["user_sector", "company_names", "user_tags", "user_note"]:
+        for column_name in ["user_sector", "company_names", "user_tags", "user_note", "media_paths"]:
             if column_name not in saved_columns:
                 conn.execute(f"ALTER TABLE saved_items ADD COLUMN {column_name} TEXT")
         conn.execute(
@@ -359,22 +360,25 @@ def save_saved_item(
     telegram_link: str,
     file_name: str = "",
     pdf_hash: str = "",
+    media_paths: list[str] | None = None,
     path: Path = DB_PATH,
 ) -> None:
     ensure_db(path)
     now = datetime.now().isoformat(timespec="seconds")
+    media_json = json.dumps(media_paths, ensure_ascii=False) if media_paths is not None else None
     with sqlite3.connect(path) as conn:
         conn.execute(
             """
             INSERT OR REPLACE INTO saved_items
             (message_id, channel, saved_at, posted_at, title, text, telegram_link, file_name, pdf_hash,
-             user_sector, company_names, user_tags, user_note)
+             user_sector, company_names, user_tags, user_note, media_paths)
             VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 COALESCE((SELECT user_sector FROM saved_items WHERE message_id = ? AND channel = ?), ''),
                 COALESCE((SELECT company_names FROM saved_items WHERE message_id = ? AND channel = ?), ''),
                 COALESCE((SELECT user_tags FROM saved_items WHERE message_id = ? AND channel = ?), ''),
-                COALESCE((SELECT user_note FROM saved_items WHERE message_id = ? AND channel = ?), '')
+                COALESCE((SELECT user_note FROM saved_items WHERE message_id = ? AND channel = ?), ''),
+                COALESCE(?, (SELECT media_paths FROM saved_items WHERE message_id = ? AND channel = ?), '[]')
             )
             """,
             (
@@ -383,6 +387,7 @@ def save_saved_item(
                 message_id, channel,
                 message_id, channel,
                 message_id, channel,
+                media_json, message_id, channel,
             ),
         )
 
@@ -395,12 +400,19 @@ def list_saved_items(path: Path = DB_PATH) -> list[SavedItem]:
             SELECT message_id, channel, saved_at, posted_at, title, text,
                    telegram_link, file_name, COALESCE(pdf_hash, ''),
                    COALESCE(user_sector, ''), COALESCE(company_names, ''),
-                   COALESCE(user_tags, ''), COALESCE(user_note, '')
+                   COALESCE(user_tags, ''), COALESCE(user_note, ''),
+                   COALESCE(media_paths, '[]')
             FROM saved_items
             ORDER BY COALESCE(posted_at, saved_at) DESC
             """
         ).fetchall()
-    return [SavedItem(*row) for row in rows]
+    return [
+        SavedItem(
+            *row[:13],
+            media_paths=json.loads(row[13] or "[]"),
+        )
+        for row in rows
+    ]
 
 
 def update_saved_item_metadata(
