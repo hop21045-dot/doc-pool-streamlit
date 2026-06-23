@@ -450,6 +450,62 @@ def message_has_image_media(message: object, document_name: str = "") -> bool:
     return Path(document_name).suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
 
 
+async def get_grouped_media_messages(
+    client: object,
+    channel: str,
+    message: object,
+    grouped_media_cache: dict[int, list[object]] | None = None,
+) -> list[object]:
+    grouped_id = getattr(message, "grouped_id", None)
+    if not grouped_id:
+        return [message]
+    cache_key = int(grouped_id)
+    if grouped_media_cache is not None and cache_key in grouped_media_cache:
+        return grouped_media_cache[cache_key]
+
+    messages: list[object] = []
+    center_id = int(getattr(message, "id", 0) or 0)
+    min_id = max(center_id - 20, 0)
+    max_id = center_id + 20
+    async for candidate in client.iter_messages(channel, min_id=min_id, max_id=max_id + 1, reverse=True):
+        if getattr(candidate, "grouped_id", None) == grouped_id:
+            messages.append(candidate)
+    if not messages:
+        messages = [message]
+    messages.sort(key=lambda item: int(getattr(item, "id", 0) or 0))
+    if grouped_media_cache is not None:
+        grouped_media_cache[cache_key] = messages
+    return messages
+
+
+async def save_saved_image_media(
+    client: object,
+    channel: str,
+    message: object,
+    document_name: str,
+    grouped_media_cache: dict[int, list[object]] | None = None,
+) -> list[str]:
+    media_paths: list[str] = []
+    media_messages = await get_grouped_media_messages(client, channel, message, grouped_media_cache)
+    for media_message in media_messages:
+        media_document_name = get_telethon_document_name(media_message)
+        if not message_has_image_media(media_message, media_document_name):
+            continue
+        try:
+            media_bytes = await client.download_media(media_message, file=bytes)
+            if media_bytes:
+                media_paths.append(
+                    save_saved_media_bytes(
+                        message_id=str(getattr(media_message, "id", "")),
+                        media_bytes=media_bytes,
+                        suffix=get_saved_media_suffix(media_message, media_document_name or document_name),
+                    )
+                )
+        except Exception:
+            continue
+    return list(dict.fromkeys(media_paths))
+
+
 def fetch_channel_posts(
     limit: int,
     classify_pdfs: bool,
@@ -495,6 +551,7 @@ async def collect_saved_messages_with_telethon(limit: int, include_heart_reactio
         if not await client.is_user_authorized():
             raise RuntimeError("Telegram 세션 인증이 필요합니다. make_telegram_session.py를 먼저 실행하세요.")
         for channel in channels:
+            grouped_media_cache: dict[int, list[object]] = {}
             async for message in client.iter_messages(channel, limit=limit):
                 has_heart = message_has_own_heart_reaction(message)
                 if include_heart_reactions and not has_heart:
@@ -505,6 +562,7 @@ async def collect_saved_messages_with_telethon(limit: int, include_heart_reactio
                     channel,
                     message,
                     heart_status="active" if has_heart else "untracked",
+                    grouped_media_cache=grouped_media_cache,
                 )
     return saved_count
 
@@ -1072,6 +1130,7 @@ async def persist_message_as_saved_item(
     channel: str,
     message: object,
     heart_status: str = "active",
+    grouped_media_cache: dict[int, list[object]] | None = None,
 ) -> int:
     text_parts = [message.message or ""]
     document_name = get_telethon_document_name(message)
@@ -1106,18 +1165,13 @@ async def persist_message_as_saved_item(
         except Exception:
             pdf_hash = ""
     elif message_has_image_media(message, document_name):
-        try:
-            media_bytes = await client.download_media(message, file=bytes)
-            if media_bytes:
-                media_paths.append(
-                    save_saved_media_bytes(
-                        message_id=message_id,
-                        media_bytes=media_bytes,
-                        suffix=get_saved_media_suffix(message, document_name),
-                    )
-                )
-        except Exception:
-            media_paths = []
+        media_paths = await save_saved_image_media(
+            client,
+            channel,
+            message,
+            document_name,
+            grouped_media_cache,
+        )
 
     save_saved_item(
         message_id=message_id,
@@ -1848,6 +1902,24 @@ def value_label(value: str) -> str:
     )
 
 
+def render_telegram_text(text: str) -> None:
+    escaped = html.escape(text or "")
+    escaped = re.sub(
+        r"(https?://[^\s<]+)",
+        r"<a href=\"\1\" target=\"_blank\">\1</a>",
+        escaped,
+    )
+    escaped = escaped.replace("\n", "<br>")
+    st.markdown(
+        (
+            "<div style='font-size:0.96rem;line-height:1.7;"
+            "white-space:normal;color:#1f2937;'>"
+            f"{escaped}</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def render_saved_library() -> None:
     st.subheader("하트/저장 글 보관함")
     st.caption(
@@ -1926,7 +1998,7 @@ def render_saved_library() -> None:
                 st.markdown(f"[원문 링크 열기]({row['링크']})")
             else:
                 st.caption(f"직접 링크 없음: @{row['채널']} 메시지 {row['메시지ID']}")
-            st.write(row["본문"])
+            render_telegram_text(row["본문"])
             if row["PDF 해시"]:
                 st.caption(f"PDF 해시: {row['PDF 해시']}")
             st.caption(f"하트 상태: {status_labels.get(row['heart_status'], row['heart_status'])}")
