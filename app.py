@@ -2239,5 +2239,19 @@ def cached_fetch_channel_posts(
     return fetch_channel_posts(limit, classify_pdfs, start_date_text, end_date_text)
 
 
+def main() -> None:
+    st.set_page_config(page_title="투자 글 저장함", page_icon="📌", layout="wide")
+    st.title("투자 글 저장함")
+    st.caption("하트 표시한 텔레그램 글과 반도체 스팟가격을 누적 관리합니다.")
+
+    with st.sidebar:
+        page = st.radio("화면", ["저장함", "반도체 스팟가격 현황"], index=0)
+
+    if page == "저장함":
+        render_saved_library()
+    else:
+        render_spot_price_status()
+
+
 if __name__ == "__main__":
     main()
